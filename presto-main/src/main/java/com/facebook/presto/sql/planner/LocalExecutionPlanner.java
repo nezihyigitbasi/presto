@@ -69,6 +69,7 @@ import com.facebook.presto.spi.PageBuilder;
 import com.facebook.presto.spi.PrestoException;
 import com.facebook.presto.spi.RecordSet;
 import com.facebook.presto.spi.block.SortOrder;
+import com.facebook.presto.spi.type.BigintType;
 import com.facebook.presto.spi.type.Type;
 import com.facebook.presto.split.MappedRecordSet;
 import com.facebook.presto.split.PageSinkManager;
@@ -788,13 +789,13 @@ public class LocalExecutionPlanner
                     sourceTypes,
                     concat(singleton(rewrittenFilter), rewrittenProjections));
 
-            RowExpression traslatedFilter = SqlToRowExpressionTranslator.translate(rewrittenFilter, expressionTypes, metadata, session, true);
+            RowExpression translatedFilter = SqlToRowExpressionTranslator.translate(rewrittenFilter, expressionTypes, metadata, session, true);
             List<RowExpression> translatedProjections = SqlToRowExpressionTranslator.translate(rewrittenProjections, expressionTypes, metadata, session, true);
 
             try {
                 if (columns != null) {
-                    CursorProcessor cursorProcessor = compiler.compileCursorProcessor(traslatedFilter, translatedProjections, sourceNode.getId());
-                    PageProcessor pageProcessor = compiler.compilePageProcessor(traslatedFilter, translatedProjections);
+                    CursorProcessor cursorProcessor = compiler.compileCursorProcessor(translatedFilter, translatedProjections, sourceNode.getId());
+                    PageProcessor pageProcessor = compiler.compilePageProcessor(translatedFilter, translatedProjections);
 
                     SourceOperatorFactory operatorFactory = new ScanFilterAndProjectOperator.ScanFilterAndProjectOperatorFactory(
                             context.getNextOperatorId(),
@@ -808,7 +809,7 @@ public class LocalExecutionPlanner
                     return new PhysicalOperation(operatorFactory, outputMappings);
                 }
                 else {
-                    PageProcessor processor = compiler.compilePageProcessor(traslatedFilter, translatedProjections);
+                    PageProcessor processor = compiler.compilePageProcessor(translatedFilter, translatedProjections);
 
                     OperatorFactory operatorFactory = new FilterAndProjectOperator.FilterAndProjectOperatorFactory(
                             context.getNextOperatorId(),
@@ -949,6 +950,9 @@ public class LocalExecutionPlanner
             for (Symbol symbol : unnestSymbols) {
                 unnestTypes.add(context.getTypes().get(symbol));
             }
+            Optional<Symbol> ordinalitySymbol = node.getOrdinalitySymbol();
+            Optional<Type> ordinalityType = ordinalitySymbol.map(context.getTypes()::get);
+            ordinalityType.ifPresent(type -> checkState(type == BigintType.BIGINT, "Type of ordinalitySymbol must always be BIGINT."));
 
             List<Integer> replicateChannels = getChannelsForSymbols(node.getReplicateSymbols(), source.getLayout());
             List<Integer> unnestChannels = getChannelsForSymbols(unnestSymbols, source.getLayout());
@@ -966,12 +970,17 @@ public class LocalExecutionPlanner
                     channel++;
                 }
             }
+            if (ordinalitySymbol.isPresent()) {
+                outputMappings.put(ordinalitySymbol.get(), channel);
+                channel++;
+            }
             OperatorFactory operatorFactory = new UnnestOperatorFactory(
                     context.getNextOperatorId(),
                     replicateChannels,
                     replicateTypes.build(),
                     unnestChannels,
-                    unnestTypes.build());
+                    unnestTypes.build(),
+                    ordinalityType.isPresent());
             return new PhysicalOperation(operatorFactory, outputMappings.build(), source);
         }
 

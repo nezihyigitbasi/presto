@@ -37,6 +37,7 @@ import java.util.List;
 import java.util.Map;
 
 import static com.facebook.presto.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
+import static com.facebook.presto.spi.StandardErrorCode.NOT_SUPPORTED;
 import static com.facebook.presto.spi.type.BigintType.BIGINT;
 import static com.facebook.presto.util.ImmutableCollectors.toImmutableList;
 import static com.google.common.base.Preconditions.checkArgument;
@@ -45,6 +46,7 @@ import static com.google.common.base.Preconditions.checkNotNull;
 public final class TypeUtils
 {
     public static final int EXPECTED_ARRAY_SIZE = 1024;
+    public static final int NULL_HASH_CODE = 0;
 
     private TypeUtils()
     {
@@ -53,7 +55,7 @@ public final class TypeUtils
     public static int hashPosition(Type type, Block block, int position)
     {
         if (block.isNull(position)) {
-            return 0;
+            return NULL_HASH_CODE;
         }
         return type.hash(block, position);
     }
@@ -225,5 +227,12 @@ public final class TypeUtils
     public static Block readStructuralBlock(Slice slice)
     {
         return new VariableWidthBlockEncoding().readBlock(slice.getInput());
+    }
+
+    public static void checkElementNotNull(boolean isNull, String errorMsg)
+    {
+        if (isNull) {
+            throw new PrestoException(NOT_SUPPORTED, errorMsg);
+        }
     }
 }

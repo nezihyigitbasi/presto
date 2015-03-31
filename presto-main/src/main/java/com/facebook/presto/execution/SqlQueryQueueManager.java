@@ -19,9 +19,16 @@ import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.google.common.base.Joiner;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import org.jgrapht.DirectedGraph;
+import org.jgrapht.GraphPath;
+import org.jgrapht.Graphs;
+import org.jgrapht.alg.FloydWarshallShortestPaths;
+import org.jgrapht.graph.DefaultEdge;
+import org.jgrapht.graph.DirectedPseudograph;
 import org.weakref.jmx.MBeanExporter;
 import org.weakref.jmx.ObjectNames;
 
@@ -35,6 +42,7 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
@@ -45,12 +53,13 @@ import static com.facebook.presto.execution.QueuedExecution.createQueuedExecutio
 import static com.facebook.presto.spi.StandardErrorCode.USER_ERROR;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
+import static java.lang.String.format;
 
 @ThreadSafe
 public class SqlQueryQueueManager
         implements QueryQueueManager
 {
-    private final ConcurrentMap<String, QueryQueue> queryQueues = new ConcurrentHashMap<>();
+    private final ConcurrentMap<QueueKey, QueryQueue> queryQueues = new ConcurrentHashMap<>();
     private final List<QueryQueueRule> rules;
     private final MBeanExporter mbeanExporter;
 
@@ -86,6 +95,61 @@ public class SqlQueryQueueManager
             }
         }
         this.rules = rules.build();
+        checkIsDAG(this.rules);
+    }
+
+    private static void checkIsDAG(List<QueryQueueRule> rules)
+    {
+        DirectedPseudograph<String, DefaultEdge> graph = new DirectedPseudograph<>(DefaultEdge.class);
+        for (QueryQueueRule rule : rules) {
+            String lastQueueName = null;
+            for (QueryQueueDefinition queue : rule.getQueues()) {
+                String currentQueueName = queue.getTemplate();
+                graph.addVertex(currentQueueName);
+                if (lastQueueName != null) {
+                    graph.addEdge(lastQueueName, currentQueueName);
+                }
+                lastQueueName = currentQueueName;
+            }
+        }
+
+        List<String> shortestCycle = shortestCycle(graph);
+
+        if (shortestCycle != null) {
+            String s = Joiner.on(", ").join(shortestCycle);
+            throw new IllegalArgumentException(format("Queues must not contain a cycle. The shortest cycle found is [%s]", s));
+        }
+    }
+
+    private static List<String> shortestCycle(DirectedGraph<String, DefaultEdge> graph)
+    {
+        FloydWarshallShortestPaths<String, DefaultEdge> floyd = new FloydWarshallShortestPaths<>(graph);
+        int minDistance = Integer.MAX_VALUE;
+        String minSource = null;
+        String minDestination = null;
+        for (DefaultEdge edge : graph.edgeSet()) {
+            String src = graph.getEdgeSource(edge);
+            String dst = graph.getEdgeTarget(edge);
+            int dist = (int) Math.round(floyd.shortestDistance(dst, src)); // from dst to src
+            if (dist < 0) {
+                continue;
+            }
+            if (dist < minDistance) {
+                minDistance = dist;
+                minSource = src;
+                minDestination = dst;
+            }
+        }
+        if (minSource == null) {
+            return null;
+        }
+        GraphPath<String, DefaultEdge> shortestPath = floyd.getShortestPath(minDestination, minSource);
+        List<String> pathVertexList = Graphs.getPathVertexList(shortestPath);
+        // note: pathVertexList will be [a, a] instead of [a] when the shortest path is a loop edge
+        if (shortestPath.getStartVertex() != shortestPath.getEndVertex()) {
+            pathVertexList.add(pathVertexList.get(0));
+        }
+        return pathVertexList;
     }
 
     @Override
@@ -121,15 +185,16 @@ public class SqlQueryQueueManager
         ImmutableList.Builder<QueryQueue> queues = ImmutableList.builder();
         for (QueryQueueDefinition definition : definitions) {
             String expandedName = definition.getExpandedTemplate(session);
-            if (!queryQueues.containsKey(expandedName)) {
+            QueueKey key = new QueueKey(definition, expandedName);
+            if (!queryQueues.containsKey(key)) {
                 QueryQueue queue = new QueryQueue(executor, definition.getMaxQueued(), definition.getMaxConcurrent());
-                if (queryQueues.putIfAbsent(expandedName, queue) == null) {
+                if (queryQueues.putIfAbsent(key, queue) == null) {
                     // Export the mbean, after checking for races
-                    String objectName = ObjectNames.builder(QueryQueue.class, expandedName).build();
+                    String objectName = ObjectNames.builder(QueryQueue.class, definition.getTemplate()).withProperty("expansion", expandedName).build();
                     mbeanExporter.export(objectName, queue);
                 }
             }
-            queues.add(queryQueues.get(expandedName));
+            queues.add(queryQueues.get(key));
         }
         return queues.build();
     }
@@ -137,9 +202,52 @@ public class SqlQueryQueueManager
     @PreDestroy
     public void destroy()
     {
-        for (String queueName : queryQueues.keySet()) {
-            String objectName = ObjectNames.builder(QueryQueue.class, queueName).build();
+        for (QueueKey key : queryQueues.keySet()) {
+            String objectName = ObjectNames.builder(QueryQueue.class, key.getQueue().getTemplate()).withProperty("expansion", key.getName()).build();
             mbeanExporter.unexport(objectName);
+        }
+    }
+
+    private static class QueueKey
+    {
+        private final QueryQueueDefinition queue;
+        private final String name;
+
+        private QueueKey(QueryQueueDefinition queue, String name)
+        {
+            this.queue = checkNotNull(queue, "queue is null");
+            this.name = checkNotNull(name, "name is null");
+        }
+
+        public QueryQueueDefinition getQueue()
+        {
+            return queue;
+        }
+
+        public String getName()
+        {
+            return name;
+        }
+
+        @Override
+        public boolean equals(Object other)
+        {
+            if (this == other) {
+                return true;
+            }
+            if (other == null || getClass() != other.getClass()) {
+                return false;
+            }
+
+            QueueKey queueKey = (QueueKey) other;
+
+            return Objects.equals(name, queueKey.name) && Objects.equals(queue.getTemplate(), queueKey.queue.getTemplate());
+        }
+
+        @Override
+        public int hashCode()
+        {
+            return Objects.hash(queue.getTemplate(), name);
         }
     }
 
