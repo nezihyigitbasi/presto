@@ -263,6 +263,9 @@ public class ServerMainModule
             binder.bind(CodeCacheGcTrigger.class).in(Scopes.SINGLETON);
         }
 
+        // memory allocation monitoring
+        binder.bind(ThreadMemoryAllocationMonitor.class).in(Scopes.SINGLETON);
+
         // Add monitoring for JVM pauses
         binder.bind(PauseMeter.class).in(Scopes.SINGLETON);
         newExporter(binder).export(PauseMeter.class).withGeneratedName();
