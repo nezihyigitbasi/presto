@@ -23,6 +23,7 @@ import org.weakref.jmx.Nested;
 
 import javax.annotation.PreDestroy;
 import javax.inject.Inject;
+import javax.inject.Provider;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.ScheduledExecutorService;
@@ -40,7 +41,7 @@ public class ExchangeClientFactory
     private final DataSize maxBufferedBytes;
     private final int concurrentRequestMultiplier;
     private final Duration maxErrorDuration;
-    private final HttpClient httpClient;
+    private final Provider<HttpClient> httpClientProvider;
     private final DataSize maxResponseSize;
     private final boolean acknowledgePages;
     private final ScheduledExecutorService scheduler;
@@ -50,7 +51,7 @@ public class ExchangeClientFactory
     @Inject
     public ExchangeClientFactory(
             ExchangeClientConfig config,
-            @ForExchange HttpClient httpClient,
+            @ForExchange Provider<HttpClient> httpClientProvider,
             @ForExchange ScheduledExecutorService scheduler)
     {
         this(
@@ -60,7 +61,7 @@ public class ExchangeClientFactory
                 config.getMaxErrorDuration(),
                 config.isAcknowledgePages(),
                 config.getPageBufferClientMaxCallbackThreads(),
-                httpClient,
+                httpClientProvider,
                 scheduler);
     }
 
@@ -71,19 +72,19 @@ public class ExchangeClientFactory
             Duration maxErrorDuration,
             boolean acknowledgePages,
             int pageBufferClientMaxCallbackThreads,
-            HttpClient httpClient,
+            Provider<HttpClient> httpClientProvider,
             ScheduledExecutorService scheduler)
     {
         this.maxBufferedBytes = requireNonNull(maxBufferedBytes, "maxBufferedBytes is null");
         this.concurrentRequestMultiplier = concurrentRequestMultiplier;
         this.maxErrorDuration = requireNonNull(maxErrorDuration, "maxErrorDuration is null");
         this.acknowledgePages = acknowledgePages;
-        this.httpClient = requireNonNull(httpClient, "httpClient is null");
+        this.httpClientProvider = requireNonNull(httpClientProvider, "httpClientProvider is null");
 
         // Use only 0.75 of the maxResponseSize to leave room for additional bytes from the encoding
         // TODO figure out a better way to compute the size of data that will be transferred over the network
         requireNonNull(maxResponseSize, "maxResponseSize is null");
-        long maxResponseSizeBytes = (long) (Math.min(httpClient.getMaxContentLength(), maxResponseSize.toBytes()) * 0.75);
+        long maxResponseSizeBytes = (long) (Math.min(httpClientProvider.get().getMaxContentLength(), maxResponseSize.toBytes()) * 0.75);
         this.maxResponseSize = new DataSize(maxResponseSizeBytes, BYTE);
 
         this.scheduler = requireNonNull(scheduler, "scheduler is null");
@@ -118,7 +119,7 @@ public class ExchangeClientFactory
                 concurrentRequestMultiplier,
                 maxErrorDuration,
                 acknowledgePages,
-                httpClient,
+                httpClientProvider.get(),
                 scheduler,
                 systemMemoryContext,
                 pageBufferClientCallbackExecutor);

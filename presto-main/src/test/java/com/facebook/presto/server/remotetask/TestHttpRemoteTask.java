@@ -250,7 +250,7 @@ public class TestHttpRemoteTask
                         return new HttpRemoteTaskFactory(
                                 new QueryManagerConfig(),
                                 TASK_MANAGER_CONFIG,
-                                testingHttpClient,
+                                () -> testingHttpClient,
                                 new TestSqlTaskManager.MockLocationFactory(),
                                 taskStatusCodec,
                                 taskInfoCodec,

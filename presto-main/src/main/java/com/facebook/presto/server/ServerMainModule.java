@@ -241,6 +241,7 @@ public class ServerMainModule
         });
 
         configBinder(binder).bindConfig(FeaturesConfig.class);
+        configBinder(binder).bindConfig(HttpClientCountConfig.class);
 
         binder.bind(SqlParser.class).in(Scopes.SINGLETON);
         binder.bind(SqlParserOptions.class).toInstance(sqlParserOptions);
@@ -350,7 +351,9 @@ public class ServerMainModule
 
         // exchange client
         binder.bind(new TypeLiteral<ExchangeClientSupplier>() {}).to(ExchangeClientFactory.class).in(Scopes.SINGLETON);
-        httpClientBinder(binder).bindHttpClient("exchange", ForExchange.class)
+        int exchangeHttpClientCount = buildConfigObject(HttpClientCountConfig.class).getExchangeHttpClientCount();
+        httpClientBinder(binder)
+                .bindHttpClient(new PrestoHttpClientProvider("exchange", ForExchange.class, exchangeHttpClientCount), Scopes.NO_SCOPE)
                 .withTracing()
                 .withConfigDefaults(config -> {
                     config.setIdleTimeout(new Duration(30, SECONDS));

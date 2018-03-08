@@ -42,6 +42,7 @@ import org.weakref.jmx.Nested;
 
 import javax.annotation.PreDestroy;
 import javax.inject.Inject;
+import javax.inject.Provider;
 
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
@@ -56,7 +57,7 @@ import static java.util.concurrent.Executors.newSingleThreadScheduledExecutor;
 public class HttpRemoteTaskFactory
         implements RemoteTaskFactory
 {
-    private final HttpClient httpClient;
+    private final Provider<HttpClient> httpClientProvider;
     private final LocationFactory locationFactory;
     private final JsonCodec<TaskStatus> taskStatusCodec;
     private final JsonCodec<TaskInfo> taskInfoCodec;
@@ -74,14 +75,14 @@ public class HttpRemoteTaskFactory
     @Inject
     public HttpRemoteTaskFactory(QueryManagerConfig config,
             TaskManagerConfig taskConfig,
-            @ForScheduler HttpClient httpClient,
+            @ForScheduler Provider<HttpClient> httpClientProvider,
             LocationFactory locationFactory,
             JsonCodec<TaskStatus> taskStatusCodec,
             JsonCodec<TaskInfo> taskInfoCodec,
             JsonCodec<TaskUpdateRequest> taskUpdateRequestCodec,
             RemoteTaskStats stats)
     {
-        this.httpClient = httpClient;
+        this.httpClientProvider = httpClientProvider;
         this.locationFactory = locationFactory;
         this.taskStatusCodec = taskStatusCodec;
         this.taskInfoCodec = taskInfoCodec;
@@ -130,7 +131,7 @@ public class HttpRemoteTaskFactory
                 fragment,
                 initialSplits,
                 outputBuffers,
-                httpClient,
+                httpClientProvider.get(),
                 executor,
                 updateScheduledExecutor,
                 errorScheduledExecutor,

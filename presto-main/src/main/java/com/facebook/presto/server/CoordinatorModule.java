@@ -213,7 +213,9 @@ public class CoordinatorModule
         binder.bind(RemoteTaskStats.class).in(Scopes.SINGLETON);
         newExporter(binder).export(RemoteTaskStats.class).withGeneratedName();
 
-        httpClientBinder(binder).bindHttpClient("scheduler", ForScheduler.class)
+        int schedulerHttpClientCount = buildConfigObject(HttpClientCountConfig.class).getSchedulerHttpClientCount();
+        httpClientBinder(binder)
+                .bindHttpClient(new PrestoHttpClientProvider("scheduler", ForScheduler.class, schedulerHttpClientCount), Scopes.NO_SCOPE)
                 .withTracing()
                 .withConfigDefaults(config -> {
                     config.setIdleTimeout(new Duration(30, SECONDS));
