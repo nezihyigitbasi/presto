@@ -246,9 +246,8 @@ public class MetastoreHiveStatisticsProvider
                     if (partitionsWithStatisticsCount == 0) {
                         return OptionalDouble.empty();
                     }
-                    else {
-                        return OptionalDouble.of(totalPartitionsCount / partitionsWithStatisticsCount * nullsCount);
-                    }
+
+                    return OptionalDouble.of((double) totalPartitionsCount / partitionsWithStatisticsCount * nullsCount);
                 });
 
         if (totalNullsCount.isValueUnknown() || totalRowsCount.isValueUnknown()) {
