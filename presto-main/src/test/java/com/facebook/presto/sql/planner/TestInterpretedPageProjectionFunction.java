@@ -32,6 +32,7 @@ import javax.annotation.Nullable;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ScheduledExecutorService;
 
 import static com.facebook.presto.SessionTestUtils.TEST_SESSION;
@@ -218,7 +219,8 @@ public class TestInterpretedPageProjectionFunction
                 TEST_SESSION.toConnectorSession(),
                 yieldSignal,
                 new Page(positions.length, blocks),
-                positionsList(positions, 0, positions.length));
+                positionsList(positions, 0, positions.length),
+                Optional.empty());
 
         Block block;
         // Get nothing for the first position.length compute due to yield
@@ -248,7 +250,8 @@ public class TestInterpretedPageProjectionFunction
                 TEST_SESSION.toConnectorSession(),
                 new DriverYieldSignal(),
                 new Page(positions.length, blocks),
-                positionsList(positions, 0, positions.length));
+                positionsList(positions, 0, positions.length),
+                Optional.empty());
         assertTrue(work.process());
         block = work.getResult();
 

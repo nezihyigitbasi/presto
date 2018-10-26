@@ -22,6 +22,7 @@ import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.DictionaryBlock;
 import com.facebook.presto.spi.block.DictionaryId;
 import com.facebook.presto.spi.block.LazyBlock;
+import com.facebook.presto.sql.gen.ExpressionProfiler;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.AbstractIterator;
 import io.airlift.slice.SizeOf;
@@ -49,6 +50,7 @@ public class PageProcessor
     static final int MAX_PAGE_SIZE_IN_BYTES = 4 * 1024 * 1024;
     static final int MIN_PAGE_SIZE_IN_BYTES = 1024 * 1024;
 
+    private final ExpressionProfiler expressionProfiler = new ExpressionProfiler();
     private final DictionarySourceIdFunction dictionarySourceIdFunction = new DictionarySourceIdFunction();
     private final Optional<PageFilter> filter;
     private final List<PageProjection> projections;
@@ -273,7 +275,7 @@ public class PageProcessor
                 }
                 else {
                     if (pageProjectWork == null) {
-                        pageProjectWork = projection.project(session, yieldSignal, projection.getInputChannels().getInputChannels(page), positionsBatch);
+                        pageProjectWork = projection.project(session, yieldSignal, projection.getInputChannels().getInputChannels(page), positionsBatch, Optional.of(expressionProfiler));
                     }
                     if (!pageProjectWork.process()) {
                         return ProcessBatchResult.processBatchYield();

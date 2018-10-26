@@ -42,6 +42,7 @@ import static com.facebook.presto.testing.TestingConnectorSession.SESSION;
 import static io.airlift.concurrent.Threads.daemonThreadsNamed;
 import static java.util.concurrent.Executors.newSingleThreadScheduledExecutor;
 import static org.testng.Assert.assertEquals;
+import static org.testng.Assert.assertFalse;
 import static org.testng.Assert.assertNotSame;
 import static org.testng.Assert.assertSame;
 import static org.testng.Assert.assertTrue;
@@ -49,6 +50,8 @@ import static org.testng.Assert.fail;
 
 public class TestPageFunctionCompiler
 {
+    private static final boolean PROFILED_CODEGEN_ENABLED = false;
+
     private static final CallExpression ADD_10_EXPRESSION = call(
             Signature.internalOperator(ADD, BIGINT.getTypeSignature(), ImmutableList.of(BIGINT.getTypeSignature(), BIGINT.getTypeSignature())),
             BIGINT,
@@ -56,6 +59,28 @@ public class TestPageFunctionCompiler
             constant(10L, BIGINT));
 
     private final ScheduledExecutorService executor = newSingleThreadScheduledExecutor(daemonThreadsNamed("test-%s"));
+
+    @Test
+    public void testExpressionProfiler()
+    {
+        PageFunctionCompiler functionCompiler = new PageFunctionCompiler(createTestMetadataManager(), 0);
+        Supplier<PageProjection> projectionSupplier = functionCompiler.compileProjection(ADD_10_EXPRESSION, Optional.empty(), true);
+        PageProjection projection = projectionSupplier.get();
+        Page page = createLongBlockPage(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+        ExpressionProfiler profiler = new ExpressionProfiler(10, 10_000);
+        for (int i = 0; i < 100; i++) {
+            Work<Block> work = projection.project(SESSION, new DriverYieldSignal(), page, SelectedPositions.positionsRange(0, page.getPositionCount()), Optional.of(profiler));
+            work.process();
+        }
+        assertFalse(profiler.shouldCheckYield());
+
+        profiler = new ExpressionProfiler(10, 0);
+        for (int i = 0; i < 100; i++) {
+            Work<Block> work = projection.project(SESSION, new DriverYieldSignal(), page, SelectedPositions.positionsRange(0, page.getPositionCount()), Optional.of(profiler));
+            work.process();
+        }
+        assertTrue(profiler.shouldCheckYield());
+    }
 
     @DataProvider(name = "forceYield")
     public static Object[][] forceYield()
@@ -68,7 +93,7 @@ public class TestPageFunctionCompiler
     {
         PageFunctionCompiler functionCompiler = new PageFunctionCompiler(createTestMetadataManager(), 0);
 
-        Supplier<PageProjection> projectionSupplier = functionCompiler.compileProjection(ADD_10_EXPRESSION, Optional.empty());
+        Supplier<PageProjection> projectionSupplier = functionCompiler.compileProjection(ADD_10_EXPRESSION, Optional.empty(), PROFILED_CODEGEN_ENABLED);
         PageProjection projection = projectionSupplier.get();
 
         // process good page and verify we got the expected number of result rows
@@ -118,9 +143,9 @@ public class TestPageFunctionCompiler
         String planNodeId = "7";
         String stageId = "20170707_223500_67496_zguwn.2";
         String classSuffix = stageId + "_" + planNodeId;
-        Supplier<PageProjection> projectionSupplier = functionCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of(classSuffix));
+        Supplier<PageProjection> projectionSupplier = functionCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of(classSuffix), PROFILED_CODEGEN_ENABLED);
         PageProjection projection = projectionSupplier.get();
-        Work<Block> work = projection.project(SESSION, new DriverYieldSignal(), createLongBlockPage(0), SelectedPositions.positionsRange(0, 1));
+        Work<Block> work = projection.project(SESSION, new DriverYieldSignal(), createLongBlockPage(0), SelectedPositions.positionsRange(0, 1), Optional.empty());
         // class name should look like PageProjectionOutput_20170707_223500_67496_zguwn_2_7_XX
         assertTrue(work.getClass().getSimpleName().startsWith("PageProjectionWork_" + stageId.replace('.', '_') + "_" + planNodeId));
     }
@@ -130,37 +155,37 @@ public class TestPageFunctionCompiler
     {
         PageFunctionCompiler cacheCompiler = new PageFunctionCompiler(createTestMetadataManager(), 100);
         assertSame(
-                cacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.empty()),
-                cacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.empty()));
+                cacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.empty(), PROFILED_CODEGEN_ENABLED),
+                cacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.empty(), PROFILED_CODEGEN_ENABLED));
         assertSame(
-                cacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint")),
-                cacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint")));
+                cacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint"), PROFILED_CODEGEN_ENABLED),
+                cacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint"), PROFILED_CODEGEN_ENABLED));
         assertSame(
-                cacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint")),
-                cacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint2")));
+                cacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint"), PROFILED_CODEGEN_ENABLED),
+                cacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint2"), PROFILED_CODEGEN_ENABLED));
         assertSame(
-                cacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.empty()),
-                cacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint2")));
+                cacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.empty(), PROFILED_CODEGEN_ENABLED),
+                cacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint2"), PROFILED_CODEGEN_ENABLED));
 
         PageFunctionCompiler noCacheCompiler = new PageFunctionCompiler(createTestMetadataManager(), 0);
         assertNotSame(
-                noCacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.empty()),
-                noCacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.empty()));
+                noCacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.empty(), PROFILED_CODEGEN_ENABLED),
+                noCacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.empty(), PROFILED_CODEGEN_ENABLED));
         assertNotSame(
-                noCacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint")),
-                noCacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint")));
+                noCacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint"), PROFILED_CODEGEN_ENABLED),
+                noCacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint"), PROFILED_CODEGEN_ENABLED));
         assertNotSame(
-                noCacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint")),
-                noCacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint2")));
+                noCacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint"), PROFILED_CODEGEN_ENABLED),
+                noCacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint2"), PROFILED_CODEGEN_ENABLED));
         assertNotSame(
-                noCacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.empty()),
-                noCacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint2")));
+                noCacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.empty(), PROFILED_CODEGEN_ENABLED),
+                noCacheCompiler.compileProjection(ADD_10_EXPRESSION, Optional.of("hint2"), PROFILED_CODEGEN_ENABLED));
     }
 
     private Block projectWithYield(PageProjection projection, Page page, SelectedPositions selectedPositions, int expectedYields)
     {
         DriverYieldSignal yieldSignal = new DriverYieldSignal();
-        Work<Block> work = projection.project(SESSION, yieldSignal, page, selectedPositions);
+        Work<Block> work = projection.project(SESSION, yieldSignal, page, selectedPositions, Optional.empty());
 
         boolean processed = false;
         for (int i = 0; i < 1000; i++) {
@@ -181,7 +206,7 @@ public class TestPageFunctionCompiler
 
     private Block projectWithoutYield(PageProjection projection, Page page, SelectedPositions selectedPositions)
     {
-        Work<Block> work = projection.project(SESSION, new DriverYieldSignal(), page, selectedPositions);
+        Work<Block> work = projection.project(SESSION, new DriverYieldSignal(), page, selectedPositions, Optional.empty());
         assertTrue(work.process());
         return work.getResult();
     }

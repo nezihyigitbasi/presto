@@ -226,7 +226,7 @@ public class ScanFilterAndProjectOperator
             return processPageSource();
         }
         else {
-            return processColumnSource();
+            throw new UnsupportedOperationException("Find another query!");
         }
     }
 

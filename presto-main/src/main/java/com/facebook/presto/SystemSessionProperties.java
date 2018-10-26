@@ -113,6 +113,7 @@ public final class SystemSessionProperties
     public static final String STATISTICS_CPU_TIMER_ENABLED = "statistics_cpu_timer_enabled";
     public static final String ENABLE_STATS_CALCULATOR = "enable_stats_calculator";
     public static final String MAX_DRIVERS_PER_TASK = "max_drivers_per_task";
+    public static final String PROFILED_CODEGEN_ENABLED = "profiled_codegen_enabled";
 
     private final List<PropertyMetadata<?>> sessionProperties;
 
@@ -525,7 +526,12 @@ public final class SystemSessionProperties
                         null,
                         false,
                         value -> min(taskManagerConfig.getMaxDriversPerTask(), validateNullablePositiveIntegerValue(value, MAX_DRIVERS_PER_TASK)),
-                        object -> object));
+                        object -> object),
+                booleanProperty(
+                        PROFILED_CODEGEN_ENABLED,
+                        "Experimental: Enable profiling in the generated code to optimize performance critical code",
+                        false,
+                        false));
     }
 
     public List<PropertyMetadata<?>> getSessionProperties()
@@ -891,5 +897,10 @@ public final class SystemSessionProperties
     public static boolean isEnableStatsCalculator(Session session)
     {
         return session.getSystemProperty(ENABLE_STATS_CALCULATOR, Boolean.class);
+    }
+
+    public static boolean isProfiledCodeGenEnabled(Session session)
+    {
+        return session.getSystemProperty(PROFILED_CODEGEN_ENABLED, Boolean.class);
     }
 }

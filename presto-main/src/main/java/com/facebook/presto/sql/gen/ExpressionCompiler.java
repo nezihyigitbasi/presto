@@ -88,11 +88,16 @@ public class ExpressionCompiler
         };
     }
 
-    public Supplier<PageProcessor> compilePageProcessor(Optional<RowExpression> filter, List<? extends RowExpression> projections, Optional<String> classNameSuffix)
+    public Supplier<PageProcessor> compilePageProcessor(Optional<RowExpression> filter, List<? extends RowExpression> projections)
+    {
+        return compilePageProcessor(filter, projections, Optional.empty(), false);
+    }
+
+    public Supplier<PageProcessor> compilePageProcessor(Optional<RowExpression> filter, List<? extends RowExpression> projections, Optional<String> classNameSuffix, boolean profiledCodegenEnabled)
     {
         Optional<Supplier<PageFilter>> filterFunctionSupplier = filter.map(expression -> pageFunctionCompiler.compileFilter(expression, classNameSuffix));
         List<Supplier<PageProjection>> pageProjectionSuppliers = projections.stream()
-                .map(projection -> pageFunctionCompiler.compileProjection(projection, classNameSuffix))
+                .map(projection -> pageFunctionCompiler.compileProjection(projection, classNameSuffix, profiledCodegenEnabled))
                 .collect(toImmutableList());
 
         return () -> {
@@ -104,9 +109,9 @@ public class ExpressionCompiler
         };
     }
 
-    public Supplier<PageProcessor> compilePageProcessor(Optional<RowExpression> filter, List<? extends RowExpression> projections)
+    public Supplier<PageProcessor> compilePageProcessor(Optional<RowExpression> filter, List<? extends RowExpression> projections, boolean profiledCodegenEnabled)
     {
-        return compilePageProcessor(filter, projections, Optional.empty());
+        return compilePageProcessor(filter, projections, Optional.empty(), profiledCodegenEnabled);
     }
 
     private <T> Class<? extends T> compile(Optional<RowExpression> filter, List<RowExpression> projections, BodyCompiler bodyCompiler, Class<? extends T> superType)

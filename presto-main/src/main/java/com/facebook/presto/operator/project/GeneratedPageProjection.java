@@ -20,11 +20,14 @@ import com.facebook.presto.spi.Page;
 import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilder;
 import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.sql.gen.ExpressionProfiler;
 import com.facebook.presto.sql.relational.RowExpression;
 
 import java.lang.invoke.MethodHandle;
+import java.util.Optional;
 
 import static com.google.common.base.MoreObjects.toStringHelper;
+import static com.google.common.base.Verify.verify;
 import static java.util.Objects.requireNonNull;
 
 public class GeneratedPageProjection
@@ -65,15 +68,22 @@ public class GeneratedPageProjection
     }
 
     @Override
-    public Work<Block> project(ConnectorSession session, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions)
+    public Work<Block> project(ConnectorSession session, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions, Optional<ExpressionProfiler> expressionProfiler)
     {
+        verify(expressionProfiler.isPresent(), "expressionProfiler must be present");
         blockBuilder = blockBuilder.newBlockBuilderLike(null);
         try {
-            return (Work<Block>) pageProjectionWorkFactory.invoke(blockBuilder, session, yieldSignal, page, selectedPositions);
+            return (Work<Block>) pageProjectionWorkFactory.invoke(blockBuilder, session, yieldSignal, page, selectedPositions, expressionProfiler.get());
         }
         catch (Throwable e) {
             throw new RuntimeException(e);
         }
+    }
+
+    @Override
+    public Optional<RowExpression> getRowExpression()
+    {
+        return Optional.of(projection);
     }
 
     @Override

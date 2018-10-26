@@ -22,6 +22,7 @@ import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.LazyBlock;
 import com.facebook.presto.spi.block.VariableWidthBlock;
 import com.facebook.presto.spi.type.Type;
+import com.facebook.presto.sql.gen.ExpressionProfiler;
 import com.google.common.collect.ImmutableList;
 import io.airlift.slice.Slice;
 import io.airlift.slice.Slices;
@@ -385,10 +386,10 @@ public class TestPageProcessor
         }
 
         @Override
-        public Work<Block> project(ConnectorSession session, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions)
+        public Work<Block> project(ConnectorSession session, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions, Optional<ExpressionProfiler> expressionProfiler)
         {
             setInvocationCount(getInvocationCount() + 1);
-            return delegate.project(session, yieldSignal, page, selectedPositions);
+            return delegate.project(session, yieldSignal, page, selectedPositions, Optional.empty());
         }
 
         public int getInvocationCount()
@@ -411,7 +412,7 @@ public class TestPageProcessor
         }
 
         @Override
-        public Work<Block> project(ConnectorSession session, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions)
+        public Work<Block> project(ConnectorSession session, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions, Optional<ExpressionProfiler> expressionProfiler)
         {
             return new YieldPageProjectionWork(session, yieldSignal, page, selectedPositions);
         }
@@ -425,7 +426,7 @@ public class TestPageProcessor
             public YieldPageProjectionWork(ConnectorSession session, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions)
             {
                 this.yieldSignal = yieldSignal;
-                this.work = delegate.project(session, yieldSignal, page, selectedPositions);
+                this.work = delegate.project(session, yieldSignal, page, selectedPositions, Optional.empty());
             }
 
             @Override
@@ -467,7 +468,7 @@ public class TestPageProcessor
         }
 
         @Override
-        public Work<Block> project(ConnectorSession session, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions)
+        public Work<Block> project(ConnectorSession session, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions, Optional<ExpressionProfiler> expressionProfiler)
         {
             return new CompletedWork<>(page.getBlock(0).getLoadedBlock());
         }
