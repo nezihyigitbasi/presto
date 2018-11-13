@@ -57,6 +57,7 @@ public class PageProcessor
     private final List<PageProjection> projections;
 
     private int projectBatchSize;
+    private boolean profilerEnabled;
 
     @VisibleForTesting
     public PageProcessor(Optional<PageFilter> filter, List<? extends PageProjection> projections, OptionalInt initialBatchSize)
@@ -77,6 +78,15 @@ public class PageProcessor
                 })
                 .collect(toImmutableList());
         this.projectBatchSize = initialBatchSize.orElse(1);
+    }
+
+    public PageProcessor(Optional<PageFilter> filter, List<? extends PageProjection> projections, boolean profilerEnabled)
+    {
+        this(filter, projections, OptionalInt.of(1));
+        this.profilerEnabled = profilerEnabled;
+        if (!profilerEnabled) {
+            this.projectBatchSize = MAX_BATCH_SIZE;
+        }
     }
 
     public PageProcessor(Optional<PageFilter> filter, List<? extends PageProjection> projections)
@@ -210,13 +220,26 @@ public class PageProcessor
 
                 // if we produced a large page or if the expression is expensive, halve the batch size for the next call
                 long pageSize = page.getSizeInBytes();
-                if (page.getPositionCount() > 1 && (pageSize > MAX_PAGE_SIZE_IN_BYTES || expressionProfiler.isExpressionExpensive())) {
-                    projectBatchSize = projectBatchSize / 2;
-                }
 
-                // if we produced a small page, double the batch size for the next call
-                if ((pageSize < MIN_PAGE_SIZE_IN_BYTES && projectBatchSize < MAX_BATCH_SIZE) && !expressionProfiler.isExpressionExpensive()) {
-                    projectBatchSize = projectBatchSize * 2;
+                if (profilerEnabled) {
+                    if (page.getPositionCount() > 1 && (pageSize > MAX_PAGE_SIZE_IN_BYTES || expressionProfiler.isExpressionExpensive())) {
+                        projectBatchSize = projectBatchSize / 2;
+                    }
+
+                    // if we produced a small page, double the batch size for the next call
+                    if ((pageSize < MIN_PAGE_SIZE_IN_BYTES && projectBatchSize < MAX_BATCH_SIZE) && !expressionProfiler.isExpressionExpensive()) {
+                        projectBatchSize = projectBatchSize * 2;
+                    }
+                }
+                else {
+                    if (page.getPositionCount() > 1 && pageSize > MAX_PAGE_SIZE_IN_BYTES) {
+                        projectBatchSize = projectBatchSize / 2;
+                    }
+
+                    // if we produced a small page, double the batch size for the next call
+                    if (pageSize < MIN_PAGE_SIZE_IN_BYTES && projectBatchSize < MAX_BATCH_SIZE) {
+                        projectBatchSize = projectBatchSize * 2;
+                    }
                 }
 
                 // remove batch from selectedPositions and previouslyComputedResults

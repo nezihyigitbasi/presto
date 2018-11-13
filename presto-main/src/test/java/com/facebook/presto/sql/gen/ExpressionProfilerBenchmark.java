@@ -71,10 +71,10 @@ import static java.util.stream.Collectors.toList;
 
 @SuppressWarnings({"PackageVisibleField", "FieldCanBeLocal"})
 @State(Scope.Thread)
-@OutputTimeUnit(TimeUnit.NANOSECONDS)
+@OutputTimeUnit(TimeUnit.MICROSECONDS)
 @Fork(3)
-@Warmup(iterations = 5, time = 60, timeUnit = SECONDS)
-@Measurement(iterations = 5, time = 60, timeUnit = SECONDS)
+@Warmup(iterations = 5, time = 10, timeUnit = SECONDS)
+@Measurement(iterations = 5, time = 10, timeUnit = SECONDS)
 @BenchmarkMode(Mode.AverageTime)
 public class ExpressionProfilerBenchmark
 {
@@ -93,9 +93,9 @@ public class ExpressionProfilerBenchmark
     private List<Page> inputPages;
     private List<Type> types;
 
-    int columnCount = 4;
+    int columnCount = 8;
 
-//    @Param({"varchar", "bigint"})
+    //    @Param({"varchar", "bigint"})
     String type = "bigint";
 
     @Param({"false", "true"})

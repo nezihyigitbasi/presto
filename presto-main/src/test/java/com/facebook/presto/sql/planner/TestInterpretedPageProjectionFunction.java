@@ -219,8 +219,7 @@ public class TestInterpretedPageProjectionFunction
                 TEST_SESSION.toConnectorSession(),
                 yieldSignal,
                 new Page(positions.length, blocks),
-                positionsList(positions, 0, positions.length),
-                Optional.empty());
+                positionsList(positions, 0, positions.length));
 
         Block block;
         // Get nothing for the first position.length compute due to yield
@@ -250,8 +249,7 @@ public class TestInterpretedPageProjectionFunction
                 TEST_SESSION.toConnectorSession(),
                 new DriverYieldSignal(),
                 new Page(positions.length, blocks),
-                positionsList(positions, 0, positions.length),
-                Optional.empty());
+                positionsList(positions, 0, positions.length));
         assertTrue(work.process());
         block = work.getResult();
 

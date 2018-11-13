@@ -19,7 +19,6 @@ import com.facebook.presto.spi.ConnectorSession;
 import com.facebook.presto.spi.Page;
 import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.type.Type;
-import com.facebook.presto.sql.gen.ExpressionProfiler;
 import com.facebook.presto.sql.relational.RowExpression;
 
 import java.util.Optional;
@@ -32,7 +31,7 @@ public interface PageProjection
 
     InputChannels getInputChannels();
 
-    Work<Block> project(ConnectorSession session, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions, Optional<ExpressionProfiler> expressionProfiler);
+    Work<Block> project(ConnectorSession session, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions);
 
     default Optional<RowExpression> getRowExpression()
     {

@@ -55,7 +55,6 @@ import io.airlift.bytecode.Scope;
 import io.airlift.bytecode.Variable;
 import io.airlift.bytecode.control.ForLoop;
 import io.airlift.bytecode.control.IfStatement;
-import io.airlift.bytecode.expression.BytecodeExpression;
 import org.weakref.jmx.Managed;
 import org.weakref.jmx.Nested;
 
@@ -204,7 +203,7 @@ public class PageFunctionCompiler
                 result.getRewrittenExpression(),
                 determinismEvaluator.isDeterministic(result.getRewrittenExpression()),
                 result.getInputChannels(),
-                constructorMethodHandle(pageProjectionWorkClass, BlockBuilder.class, ConnectorSession.class, DriverYieldSignal.class, Page.class, SelectedPositions.class, ExpressionProfiler.class));
+                constructorMethodHandle(pageProjectionWorkClass, BlockBuilder.class, ConnectorSession.class, DriverYieldSignal.class, Page.class, SelectedPositions.class));
     }
 
     private static ParameterizedType generateProjectionWorkClassName(Optional<String> classNameSuffix)
@@ -220,7 +219,6 @@ public class PageFunctionCompiler
                 type(Object.class),
                 type(Work.class));
 
-        FieldDefinition expressionProfilerField = classDefinition.declareField(a(PRIVATE), "expressionProfiler", ExpressionProfiler.class);
         FieldDefinition blockBuilderField = classDefinition.declareField(a(PRIVATE), "blockBuilder", BlockBuilder.class);
         FieldDefinition sessionField = classDefinition.declareField(a(PRIVATE), "session", ConnectorSession.class);
         FieldDefinition yieldSignalField = classDefinition.declareField(a(PRIVATE), "yieldSignal", DriverYieldSignal.class);
@@ -232,33 +230,7 @@ public class PageFunctionCompiler
         CachedInstanceBinder cachedInstanceBinder = new CachedInstanceBinder(classDefinition, callSiteBinder);
 
         // process
-        generateProcessMethod(
-                classDefinition,
-                blockBuilderField,
-                selectedPositionsField,
-                resultField);
-
-        // processPositions
-        generateProcessPositionsMethod(
-                profiledCodegenEnabled,
-                classDefinition,
-                expressionProfilerField,
-                sessionField,
-                yieldSignalField,
-                pageField,
-                selectedPositionsField,
-                nextIndexOrPositionField);
-
-        // processRange
-        generateProcessRangeMethod(
-                profiledCodegenEnabled,
-                classDefinition,
-                expressionProfilerField,
-                sessionField,
-                yieldSignalField,
-                pageField,
-                selectedPositionsField,
-                nextIndexOrPositionField);
+        generateProcessMethod(classDefinition, blockBuilderField, sessionField, pageField, selectedPositionsField, nextIndexOrPositionField, resultField, yieldSignalField, profiledCodegenEnabled);
 
         // getResult
         MethodDefinition method = classDefinition.declareMethod(a(PUBLIC), "getResult", type(Object.class), ImmutableList.of());
@@ -274,9 +246,8 @@ public class PageFunctionCompiler
         Parameter yieldSignal = arg("yieldSignal", DriverYieldSignal.class);
         Parameter page = arg("page", Page.class);
         Parameter selectedPositions = arg("selectedPositions", SelectedPositions.class);
-        Parameter expressionProfiler = arg("expressionProfiler", ExpressionProfiler.class);
 
-        MethodDefinition constructorDefinition = classDefinition.declareConstructor(a(PUBLIC), blockBuilder, session, yieldSignal, page, selectedPositions, expressionProfiler);
+        MethodDefinition constructorDefinition = classDefinition.declareConstructor(a(PUBLIC), blockBuilder, session, yieldSignal, page, selectedPositions);
 
         BytecodeBlock body = constructorDefinition.getBody();
         Variable thisVariable = constructorDefinition.getThis();
@@ -290,9 +261,7 @@ public class PageFunctionCompiler
                 .append(thisVariable.setField(pageField, page))
                 .append(thisVariable.setField(selectedPositionsField, selectedPositions))
                 .append(thisVariable.setField(nextIndexOrPositionField, selectedPositions.invoke("getOffset", int.class)))
-                .append(thisVariable.setField(resultField, constantNull(Block.class)))
-                .append(thisVariable.setField(expressionProfilerField, expressionProfiler))
-                .append(thisVariable.getField(expressionProfilerField).invoke("reset", void.class));
+                .append(thisVariable.setField(resultField, constantNull(Block.class)));
 
         cachedInstanceBinder.generateInitializations(thisVariable, body);
         body.ret();
@@ -303,8 +272,13 @@ public class PageFunctionCompiler
     private static MethodDefinition generateProcessMethod(
             ClassDefinition classDefinition,
             FieldDefinition blockBuilder,
+            FieldDefinition session,
+            FieldDefinition page,
             FieldDefinition selectedPositions,
-            FieldDefinition result)
+            FieldDefinition nextIndexOrPosition,
+            FieldDefinition result,
+            FieldDefinition yieldSignal,
+            boolean profiledCodegenEnabled)
     {
         MethodDefinition method = classDefinition.declareMethod(a(PUBLIC), "process", type(boolean.class), ImmutableList.of());
 
@@ -312,15 +286,42 @@ public class PageFunctionCompiler
         Variable thisVariable = method.getThis();
         BytecodeBlock body = method.getBody();
 
-        body.append(new IfStatement()
-                .condition(thisVariable.getField(selectedPositions).invoke("isList", boolean.class))
-                .ifTrue(new BytecodeBlock()
-                        .append(new IfStatement()
-                                .condition(not(thisVariable.invoke("processPositions", boolean.class)))
-                                .ifTrue(new BytecodeBlock().push(false).retBoolean())))
-                .ifFalse(new IfStatement()
-                        .condition(not(thisVariable.invoke("processRange", boolean.class)))
-                        .ifTrue(new BytecodeBlock().push(false).retBoolean())));
+        Variable from = scope.declareVariable("from", body, thisVariable.getField(nextIndexOrPosition));
+        Variable to = scope.declareVariable("to", body, add(thisVariable.getField(selectedPositions).invoke("getOffset", int.class), thisVariable.getField(selectedPositions).invoke("size", int.class)));
+        Variable positions = scope.declareVariable(int[].class, "positions");
+        Variable index = scope.declareVariable(int.class, "index");
+
+        IfStatement ifStatement = new IfStatement()
+                .condition(thisVariable.getField(selectedPositions).invoke("isList", boolean.class));
+        body.append(ifStatement);
+
+        BytecodeBlock evaluatePositions = new BytecodeBlock()
+                .append(thisVariable.invoke("evaluate", void.class, thisVariable.getField(session), thisVariable.getField(page), positions.getElement(index)));
+
+        if (!profiledCodegenEnabled) {
+            evaluatePositions = evaluatePositions.append(generateCheckYieldBlock(thisVariable, index, yieldSignal, nextIndexOrPosition));
+        }
+
+        ifStatement.ifTrue(new BytecodeBlock()
+                .append(positions.set(thisVariable.getField(selectedPositions).invoke("getPositions", int[].class)))
+                .append(new ForLoop("positions loop")
+                        .initialize(index.set(from))
+                        .condition(lessThan(index, to))
+                        .update(index.increment())
+                        .body(evaluatePositions)));
+
+        BytecodeBlock evaluateRange = new BytecodeBlock()
+                .append(thisVariable.invoke("evaluate", void.class, thisVariable.getField(session), thisVariable.getField(page), index));
+
+        if (!profiledCodegenEnabled) {
+            evaluateRange = evaluateRange.append(generateCheckYieldBlock(thisVariable, index, yieldSignal, nextIndexOrPosition));
+        }
+
+        ifStatement.ifFalse(new ForLoop("range based loop")
+                .initialize(index.set(from))
+                .condition(lessThan(index, to))
+                .update(index.increment())
+                .body(evaluateRange));
 
         body.comment("result = this.blockBuilder.build(); return true;")
                 .append(thisVariable.setField(result, thisVariable.getField(blockBuilder).invoke("build", Block.class)))
@@ -328,164 +329,6 @@ public class PageFunctionCompiler
                 .retBoolean();
 
         return method;
-    }
-
-    private void generateProcessRangeMethod(
-            boolean profiledCodegenEnabled,
-            ClassDefinition classDefinition,
-            FieldDefinition expressionProfiler,
-            FieldDefinition session,
-            FieldDefinition yieldSignal,
-            FieldDefinition page,
-            FieldDefinition selectedPositions,
-            FieldDefinition nextIndexOrPosition)
-    {
-        MethodDefinition method = classDefinition.declareMethod(a(PUBLIC), "processRange", type(boolean.class), ImmutableList.of());
-        Scope scope = method.getScope();
-        BytecodeBlock body = method.getBody();
-
-        Variable thisVariable = method.getThis();
-        Variable from = scope.declareVariable("from", body, thisVariable.getField(nextIndexOrPosition));
-        Variable to = scope.declareVariable("to", body, add(thisVariable.getField(selectedPositions).invoke("getOffset", int.class), thisVariable.getField(selectedPositions).invoke("size", int.class)));
-        Variable index = scope.declareVariable(int.class, "index");
-
-        BytecodeExpression invokeEvaluate = thisVariable.invoke("evaluate", void.class, thisVariable.getField(session), thisVariable.getField(page), index);
-
-        if (profiledCodegenEnabled) {
-            body.append(new IfStatement()
-                    .condition(thisVariable.getField(expressionProfiler).invoke("isDoneProfiling", boolean.class))
-                    .ifTrue(generateDoneProfilingBody(
-                            thisVariable,
-                            expressionProfiler,
-                            page,
-                            session,
-                            yieldSignal,
-                            nextIndexOrPosition,
-                            from,
-                            to,
-                            Optional.empty(),
-                            index))
-                    .ifFalse(new BytecodeBlock()
-                            .append(new ForLoop("range loop")
-                                    .initialize(index.set(from))
-                                    .condition(lessThan(index, to))
-                                    .update(index.increment())
-                                    .body(new BytecodeBlock()
-                                            .append(invokeEvaluate)
-                                            .append(thisVariable.getField(expressionProfiler).invoke("profile", void.class))
-                                            .append(generateCheckYieldBlock(thisVariable, index, yieldSignal, nextIndexOrPosition))))));
-        }
-        else {
-            body.append(new ForLoop("range loop")
-                    .initialize(index.set(from))
-                    .condition(lessThan(index, to))
-                    .update(index.increment())
-                    .body(new BytecodeBlock()
-                            .append(invokeEvaluate)
-                            .append(generateCheckYieldBlock(thisVariable, index, yieldSignal, nextIndexOrPosition))));
-        }
-
-        body.comment("return true;")
-                .push(true)
-                .retBoolean();
-    }
-
-    private void generateProcessPositionsMethod(
-            boolean profiledCodegenEnabled,
-            ClassDefinition classDefinition,
-            FieldDefinition expressionProfiler,
-            FieldDefinition session,
-            FieldDefinition yieldSignal,
-            FieldDefinition page,
-            FieldDefinition selectedPositions,
-            FieldDefinition nextIndexOrPosition)
-    {
-        MethodDefinition method = classDefinition.declareMethod(a(PUBLIC), "processPositions", type(boolean.class), ImmutableList.of());
-
-        Scope scope = method.getScope();
-        BytecodeBlock body = method.getBody();
-
-        Variable thisVariable = method.getThis();
-        Variable positions = scope.declareVariable(int[].class, "positions");
-        Variable index = scope.declareVariable(int.class, "index");
-        Variable from = scope.declareVariable("from", body, thisVariable.getField(nextIndexOrPosition));
-        Variable to = scope.declareVariable("to", body, add(thisVariable.getField(selectedPositions).invoke("getOffset", int.class), thisVariable.getField(selectedPositions).invoke("size", int.class)));
-
-        BytecodeExpression invokeEvaluate = thisVariable.invoke("evaluate", void.class, thisVariable.getField(session), thisVariable.getField(page), positions.getElement(index));
-
-        body.append((positions.set(thisVariable.getField(selectedPositions).invoke("getPositions", int[].class))));
-
-        if (profiledCodegenEnabled) {
-            body.append(new IfStatement()
-                    .condition(thisVariable.getField(expressionProfiler).invoke("isDoneProfiling", boolean.class))
-                    .ifTrue(generateDoneProfilingBody(
-                            thisVariable,
-                            expressionProfiler,
-                            page,
-                            session,
-                            yieldSignal,
-                            nextIndexOrPosition,
-                            from,
-                            to,
-                            Optional.of(positions),
-                            index))
-                    .ifFalse(new BytecodeBlock()
-                            .append(new ForLoop("positions loop")
-                                    .initialize(index.set(from))
-                                    .condition(lessThan(index, to))
-                                    .update(index.increment())
-                                    .body(new BytecodeBlock()
-                                            .append(invokeEvaluate)
-                                            .append(thisVariable.getField(expressionProfiler).invoke("profile", void.class))
-                                            .append(generateCheckYieldBlock(thisVariable, index, yieldSignal, nextIndexOrPosition))))));
-        }
-        else {
-            body.append(new BytecodeBlock()
-                    .append(new ForLoop("positions loop")
-                            .initialize(index.set(from))
-                            .condition(lessThan(index, to))
-                            .update(index.increment())
-                            .body(new BytecodeBlock()
-                                    .append(invokeEvaluate)
-                                    .append(generateCheckYieldBlock(thisVariable, index, yieldSignal, nextIndexOrPosition)))));
-        }
-
-        body.comment("return true;")
-            .push(true)
-            .retBoolean();
-    }
-
-    private static BytecodeNode generateDoneProfilingBody(
-            Variable thisVariable,
-            FieldDefinition expressionProfiler,
-            FieldDefinition page,
-            FieldDefinition session,
-            FieldDefinition yieldSignal,
-            FieldDefinition nextIndexOrPosition,
-            Variable from,
-            Variable to,
-            Optional<Variable> positions,
-            Variable index)
-    {
-        IfStatement ifStatement = new IfStatement()
-                .condition(thisVariable.getField(expressionProfiler).invoke("shouldCheckYield", boolean.class));
-
-        ifStatement.ifTrue(new ForLoop("loop checking the yield signal")
-                .initialize(index.set(from))
-                .condition(lessThan(index, to))
-                .update(index.increment())
-                .body(new BytecodeBlock()
-                        .append(thisVariable.invoke("evaluate", void.class, thisVariable.getField(session), thisVariable.getField(page), positions.map(positionsArray -> positionsArray.getElement(index)).orElse(index)))
-                        .append(generateCheckYieldBlock(thisVariable, index, yieldSignal, nextIndexOrPosition))));
-
-        ifStatement.ifFalse(new ForLoop("loop that doesn't check the yield signal")
-                .initialize(index.set(from))
-                .condition(lessThan(index, to))
-                .update(index.increment())
-                .body(new BytecodeBlock()
-                        .append(thisVariable.invoke("evaluate", void.class, thisVariable.getField(session), thisVariable.getField(page), positions.map(positionsArray -> positionsArray.getElement(index)).orElse(index)))));
-
-        return ifStatement;
     }
 
     private static BytecodeBlock generateCheckYieldBlock(Variable thisVariable, Variable index, FieldDefinition yieldSignal, FieldDefinition nextIndexOrPosition)

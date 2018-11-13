@@ -105,7 +105,7 @@ public class ExpressionCompiler
             List<PageProjection> pageProjections = pageProjectionSuppliers.stream()
                     .map(Supplier::get)
                     .collect(toImmutableList());
-            return new PageProcessor(filterFunction, pageProjections);
+            return new PageProcessor(filterFunction, pageProjections, profiledCodegenEnabled);
         };
     }
 

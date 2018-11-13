@@ -22,10 +22,7 @@ import com.facebook.presto.spi.block.Block;
 import com.facebook.presto.spi.block.BlockBuilder;
 import com.facebook.presto.spi.block.RunLengthEncodedBlock;
 import com.facebook.presto.spi.type.Type;
-import com.facebook.presto.sql.gen.ExpressionProfiler;
 import com.google.common.collect.ImmutableList;
-
-import java.util.Optional;
 
 import static com.facebook.presto.spi.type.TypeUtils.writeNativeValue;
 
@@ -64,7 +61,7 @@ public class ConstantPageProjection
     }
 
     @Override
-    public Work<Block> project(ConnectorSession session, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions, Optional<ExpressionProfiler> expressionProfiler)
+    public Work<Block> project(ConnectorSession session, DriverYieldSignal yieldSignal, Page page, SelectedPositions selectedPositions)
     {
         return new CompletedWork<>(new RunLengthEncodedBlock(value, selectedPositions.size()));
     }
