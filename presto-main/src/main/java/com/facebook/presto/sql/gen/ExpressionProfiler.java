@@ -13,21 +13,11 @@
  */
 package com.facebook.presto.sql.gen;
 
-import com.facebook.presto.annotation.UsedByGeneratedCode;
 import com.google.common.annotations.VisibleForTesting;
-
-import javax.annotation.concurrent.NotThreadSafe;
 
 import static com.google.common.base.Verify.verify;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
-/**
- * Called from generated projection class to profile a single expression over
- * multiple pages, and determine whether to check the yield signal in projection tight loop.
- * Please see {@link PageFunctionCompiler} for how to use this in generated code.
- */
-@UsedByGeneratedCode
-@NotThreadSafe
 public class ExpressionProfiler
 {
     private static final int NUMBER_OF_ROWS_TO_PROFILE = 1024;
@@ -38,7 +28,7 @@ public class ExpressionProfiler
     private double meanExecutionTime;
     private int samples;
     private long previousTimestamp = -1;
-    private boolean shouldCheckYield = true;
+    private boolean isExpressionExpensive = true;
     private boolean isProfiling = true;
 
     public ExpressionProfiler()
@@ -48,7 +38,7 @@ public class ExpressionProfiler
     }
 
     @VisibleForTesting
-    ExpressionProfiler(int rowsToProfile, int expensiveFunctionThresholdMillis)
+    public ExpressionProfiler(int rowsToProfile, int expensiveFunctionThresholdMillis)
     {
         verify(rowsToProfile >= 0);
         verify(expensiveFunctionThresholdMillis >= 0);
@@ -56,48 +46,36 @@ public class ExpressionProfiler
         this.expensiveFunctionThresholdMillis = expensiveFunctionThresholdMillis;
     }
 
-    /**
-     * This method keeps track of the timings between subsequent calls to
-     * determine how long the expression evaluation takes. Based on that
-     * it determines whether the yield signal should be checked.
-     */
-    public void profile()
+    public void start()
     {
         if (!isProfiling) {
             return;
         }
 
-        // just update the previous timestamp and continue for the initial call
-        if (previousTimestamp == -1) {
-            previousTimestamp = System.nanoTime();
+        previousTimestamp = System.nanoTime();
+    }
+
+    public void stop(int batchSize)
+    {
+        if (!isProfiling) {
             return;
         }
 
         long now = System.nanoTime();
         long delta = NANOSECONDS.toMillis(now - previousTimestamp);
         meanExecutionTime = (meanExecutionTime * samples + delta) / (samples + 1);
-        if (samples++ >= rowsToProfile) {
+        samples += batchSize;
+        if (samples >= rowsToProfile) {
             isProfiling = false;
             if (meanExecutionTime < expensiveFunctionThresholdMillis) {
-                shouldCheckYield = false;
+                isExpressionExpensive = false;
             }
-            return;
         }
-        previousTimestamp = now;
-    }
-
-    public boolean isDoneProfiling()
-    {
-        return !isProfiling;
-    }
-
-    public boolean shouldCheckYield()
-    {
-        return shouldCheckYield;
-    }
-
-    public void reset()
-    {
         previousTimestamp = -1;
+    }
+
+    public boolean isExpressionExpensive()
+    {
+        return isExpressionExpensive;
     }
 }

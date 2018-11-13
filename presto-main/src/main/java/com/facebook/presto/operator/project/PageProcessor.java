@@ -33,6 +33,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.function.Function;
 
 import static com.facebook.presto.operator.project.PageProcessorOutput.EMPTY_PAGE_PROCESSOR_OUTPUT;
@@ -46,7 +47,7 @@ import static java.util.Objects.requireNonNull;
 @NotThreadSafe
 public class PageProcessor
 {
-    static final int MAX_BATCH_SIZE = 8 * 1024;
+    public static final int MAX_BATCH_SIZE = 8 * 1024;
     static final int MAX_PAGE_SIZE_IN_BYTES = 4 * 1024 * 1024;
     static final int MIN_PAGE_SIZE_IN_BYTES = 1024 * 1024;
 
@@ -55,9 +56,10 @@ public class PageProcessor
     private final Optional<PageFilter> filter;
     private final List<PageProjection> projections;
 
-    private int projectBatchSize = MAX_BATCH_SIZE;
+    private int projectBatchSize;
 
-    public PageProcessor(Optional<PageFilter> filter, List<? extends PageProjection> projections)
+    @VisibleForTesting
+    public PageProcessor(Optional<PageFilter> filter, List<? extends PageProjection> projections, OptionalInt initialBatchSize)
     {
         this.filter = requireNonNull(filter, "filter is null")
                 .map(pageFilter -> {
@@ -74,6 +76,12 @@ public class PageProcessor
                     return projection;
                 })
                 .collect(toImmutableList());
+        this.projectBatchSize = initialBatchSize.orElse(1);
+    }
+
+    public PageProcessor(Optional<PageFilter> filter, List<? extends PageProjection> projections)
+    {
+        this(filter, projections, OptionalInt.of(1));
     }
 
     public PageProcessorOutput process(ConnectorSession session, DriverYieldSignal yieldSignal, Page page)
@@ -200,14 +208,14 @@ public class PageProcessor
                 verify(result.isSuccess());
                 Page page = result.getPage();
 
-                // if we produced a large page, halve the batch size for the next call
+                // if we produced a large page or if the expression is expensive, halve the batch size for the next call
                 long pageSize = page.getSizeInBytes();
-                if (page.getPositionCount() > 1 && pageSize > MAX_PAGE_SIZE_IN_BYTES) {
+                if (page.getPositionCount() > 1 && (pageSize > MAX_PAGE_SIZE_IN_BYTES || expressionProfiler.isExpressionExpensive())) {
                     projectBatchSize = projectBatchSize / 2;
                 }
 
                 // if we produced a small page, double the batch size for the next call
-                if (pageSize < MIN_PAGE_SIZE_IN_BYTES && projectBatchSize < MAX_BATCH_SIZE) {
+                if ((pageSize < MIN_PAGE_SIZE_IN_BYTES && projectBatchSize < MAX_BATCH_SIZE) && !expressionProfiler.isExpressionExpensive()) {
                     projectBatchSize = projectBatchSize * 2;
                 }
 
@@ -275,7 +283,9 @@ public class PageProcessor
                 }
                 else {
                     if (pageProjectWork == null) {
-                        pageProjectWork = projection.project(session, yieldSignal, projection.getInputChannels().getInputChannels(page), positionsBatch, Optional.of(expressionProfiler));
+                        expressionProfiler.start();
+                        pageProjectWork = projection.project(session, yieldSignal, projection.getInputChannels().getInputChannels(page), positionsBatch);
+                        expressionProfiler.stop(positionsBatch.size());
                     }
                     if (!pageProjectWork.process()) {
                         return ProcessBatchResult.processBatchYield();
