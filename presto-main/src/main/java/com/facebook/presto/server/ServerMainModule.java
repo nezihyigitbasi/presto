@@ -300,7 +300,7 @@ public class ServerMainModule
 
         jsonCodecBinder(binder).bindJsonCodec(TaskStatus.class);
         jsonCodecBinder(binder).bindJsonCodec(StageInfo.class);
-        jsonCodecBinder(binder).bindJsonCodec(TaskInfo.class, true);
+        jsonCodecBinder(binder).bindSmileCodec(TaskInfo.class);
         jsonCodecBinder(binder).bindJsonCodec(OperatorStats.class);
         jsonCodecBinder(binder).bindJsonCodec(ExecutionFailureInfo.class);
         jaxrsBinder(binder).bind(PagesResponseWriter.class);
@@ -372,7 +372,7 @@ public class ServerMainModule
         binder.install(new SystemConnectorModule());
 
         // splits
-        jsonCodecBinder(binder).bindJsonCodec(TaskUpdateRequest.class, true);
+        jsonCodecBinder(binder).bindSmileCodec(TaskUpdateRequest.class);
         jsonCodecBinder(binder).bindJsonCodec(ConnectorSplit.class);
         jsonBinder(binder).addSerializerBinding(Slice.class).to(SliceSerializer.class);
         jsonBinder(binder).addDeserializerBinding(Slice.class).to(SliceDeserializer.class);
