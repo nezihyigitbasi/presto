@@ -40,7 +40,6 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 import static com.google.common.net.HttpHeaders.CONTENT_TYPE;
-import static com.google.common.net.MediaType.JSON_UTF_8;
 import static io.airlift.http.client.FullJsonResponseHandler.createFullJsonResponseHandler;
 import static io.airlift.http.client.HttpUriBuilder.uriBuilderFrom;
 import static io.airlift.http.client.Request.Builder.prepareGet;
@@ -198,7 +197,7 @@ public class TaskInfoFetcher
         URI uri = summarizeTaskInfo ? httpUriBuilder.addParameter("summarize").build() : httpUriBuilder.build();
         Request request = prepareGet()
                 .setUri(uri)
-                .setHeader(CONTENT_TYPE, JSON_UTF_8.toString())
+                .setHeader(CONTENT_TYPE, "application/x-jackson-smile")
                 .build();
 
         errorTracker.startRequest();

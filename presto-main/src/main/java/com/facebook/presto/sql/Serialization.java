@@ -60,7 +60,7 @@ public final class Serialization
         public Expression deserialize(JsonParser jsonParser, DeserializationContext deserializationContext)
                 throws IOException
         {
-            return rewriteIdentifiersToSymbolReferences(sqlParser.createExpression(jsonParser.readValueAs(String.class)));
+            return rewriteIdentifiersToSymbolReferences(sqlParser.createExpression(jsonParser.getText()));
         }
     }
 
@@ -79,7 +79,8 @@ public final class Serialization
         public FunctionCall deserialize(JsonParser jsonParser, DeserializationContext deserializationContext)
                 throws IOException
         {
-            return (FunctionCall) rewriteIdentifiersToSymbolReferences(sqlParser.createExpression(jsonParser.readValueAs(String.class)));
+            // jsonParser.readValueAs(String.class) tries getting the codec under the hood and fails for SmileParser
+            return (FunctionCall) rewriteIdentifiersToSymbolReferences(sqlParser.createExpression(jsonParser.getText()));
         }
     }
 }

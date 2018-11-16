@@ -85,6 +85,7 @@ public class TaskResource
 {
     private static final Duration ADDITIONAL_WAIT_TIME = new Duration(5, SECONDS);
     private static final Duration DEFAULT_MAX_WAIT_TIME = new Duration(2, SECONDS);
+    private static final String APPLICATION_JACKSON_SMILE = "application/x-jackson-smile";
 
     private final TaskManager taskManager;
     private final SessionPropertyManager sessionPropertyManager;
@@ -119,8 +120,8 @@ public class TaskResource
 
     @POST
     @Path("{taskId}")
-    @Consumes(MediaType.APPLICATION_JSON)
-    @Produces(MediaType.APPLICATION_JSON)
+    @Consumes(APPLICATION_JACKSON_SMILE)
+    @Produces(APPLICATION_JACKSON_SMILE)
     public Response createOrUpdateTask(@PathParam("taskId") TaskId taskId, TaskUpdateRequest taskUpdateRequest, @Context UriInfo uriInfo)
     {
         requireNonNull(taskUpdateRequest, "taskUpdateRequest is null");
@@ -142,7 +143,7 @@ public class TaskResource
 
     @GET
     @Path("{taskId}")
-    @Produces(MediaType.APPLICATION_JSON)
+    @Produces(APPLICATION_JACKSON_SMILE)
     public void getTaskInfo(
             @PathParam("taskId") final TaskId taskId,
             @HeaderParam(PRESTO_CURRENT_STATE) TaskState currentState,
@@ -214,7 +215,7 @@ public class TaskResource
 
     @DELETE
     @Path("{taskId}")
-    @Produces(MediaType.APPLICATION_JSON)
+    @Produces(APPLICATION_JACKSON_SMILE)
     public TaskInfo deleteTask(
             @PathParam("taskId") TaskId taskId,
             @QueryParam("abort") @DefaultValue("true") boolean abort,
