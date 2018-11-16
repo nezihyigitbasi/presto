@@ -72,9 +72,9 @@ import static java.util.stream.Collectors.toList;
 @SuppressWarnings({"PackageVisibleField", "FieldCanBeLocal"})
 @State(Scope.Thread)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
-@Fork(3)
-@Warmup(iterations = 5, time = 10, timeUnit = SECONDS)
-@Measurement(iterations = 5, time = 10, timeUnit = SECONDS)
+@Fork(5)
+@Warmup(iterations = 5, time = 30, timeUnit = SECONDS)
+@Measurement(iterations = 5, time = 30, timeUnit = SECONDS)
 @BenchmarkMode(Mode.AverageTime)
 public class ExpressionProfilerBenchmark
 {
