@@ -73,8 +73,8 @@ import static java.util.stream.Collectors.toList;
 @State(Scope.Thread)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @Fork(5)
-@Warmup(iterations = 10, time = 60, timeUnit = SECONDS)
-@Measurement(iterations = 10, time = 60, timeUnit = SECONDS)
+@Warmup(iterations = 10, time = 10, timeUnit = SECONDS)
+@Measurement(iterations = 10, time = 10, timeUnit = SECONDS)
 @BenchmarkMode(Mode.AverageTime)
 public class ExpressionProfilerBenchmark
 {
