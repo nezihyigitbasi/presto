@@ -14,64 +14,58 @@
 package com.facebook.presto.sql.gen;
 
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Ticker;
 
+import static com.google.common.base.Ticker.systemTicker;
 import static com.google.common.base.Verify.verify;
+import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 public class ExpressionProfiler
 {
-    private static final int NUMBER_OF_ROWS_TO_PROFILE = 1024;
-    private static final int EXPENSIVE_FUNCTION_THRESHOLD_MILLIS = 1_000;
+    private static final long EXPENSIVE_EXPRESSION_THRESHOLD_MILLIS = 1_000;
+    private static final int NOT_INITALIZED = -1;
 
-    private final int rowsToProfile;
-    private final int expensiveFunctionThresholdMillis;
-    private double meanExecutionTime;
+    private final Ticker ticker;
+    private final long expensiveExpressionThresholdMillis;
+    private double totalExecutionTime;
     private int samples;
-    private long previousTimestamp = -1;
+    private long previousTimestamp = NOT_INITALIZED;
     private boolean isExpressionExpensive = true;
-    private boolean isProfiling = true;
 
     public ExpressionProfiler()
     {
-        this.rowsToProfile = NUMBER_OF_ROWS_TO_PROFILE;
-        this.expensiveFunctionThresholdMillis = EXPENSIVE_FUNCTION_THRESHOLD_MILLIS;
+        this.expensiveExpressionThresholdMillis = EXPENSIVE_EXPRESSION_THRESHOLD_MILLIS;
+        this.ticker = systemTicker();
     }
 
     @VisibleForTesting
-    public ExpressionProfiler(int rowsToProfile, int expensiveFunctionThresholdMillis)
+    public ExpressionProfiler(Ticker ticker, long expensiveExpressionThresholdMillis)
     {
-        verify(rowsToProfile >= 0);
-        verify(expensiveFunctionThresholdMillis >= 0);
-        this.rowsToProfile = rowsToProfile;
-        this.expensiveFunctionThresholdMillis = expensiveFunctionThresholdMillis;
+        verify(expensiveExpressionThresholdMillis >= 0);
+        requireNonNull(ticker, "ticker is null");
+        this.expensiveExpressionThresholdMillis = expensiveExpressionThresholdMillis;
+        this.ticker = ticker;
     }
 
     public void start()
     {
-        if (!isProfiling) {
-            return;
-        }
-
-        previousTimestamp = System.nanoTime();
+        previousTimestamp = ticker.read();
     }
 
     public void stop(int batchSize)
     {
-        if (!isProfiling) {
-            return;
-        }
+        verify(previousTimestamp != NOT_INITALIZED, "start() is not called");
+        verify(batchSize > 0, "batchSize must be positive");
 
-        long now = System.nanoTime();
+        long now = ticker.read();
         long delta = NANOSECONDS.toMillis(now - previousTimestamp);
-        meanExecutionTime = (meanExecutionTime * samples + delta) / (samples + 1);
+        totalExecutionTime += delta;
         samples += batchSize;
-        if (samples >= rowsToProfile) {
-            isProfiling = false;
-            if (meanExecutionTime < expensiveFunctionThresholdMillis) {
-                isExpressionExpensive = false;
-            }
+        if ((totalExecutionTime / samples) < expensiveExpressionThresholdMillis) {
+            isExpressionExpensive = false;
         }
-        previousTimestamp = -1;
+        previousTimestamp = NOT_INITALIZED;
     }
 
     public boolean isExpressionExpensive()
