@@ -14,6 +14,7 @@
 package com.facebook.presto.tests.tpch;
 
 import com.facebook.presto.tests.DistributedQueryRunner;
+import com.google.common.collect.ImmutableMap;
 import io.airlift.log.Logger;
 import io.airlift.log.Logging;
 
@@ -26,7 +27,7 @@ public final class TpchQueryRunner
     {
         Logging.initialize();
         DistributedQueryRunner queryRunner = TpchQueryRunnerBuilder.builder()
-                .setSingleExtraProperty("http-server.http.port", "8080")
+                .setExtraProperties(ImmutableMap.of("experimental.internal-communication.binary-transport-enabled", "true", "http-server.http.port", "8080"))
                 .build();
         Thread.sleep(10);
         Logger log = Logger.get(TpchQueryRunner.class);

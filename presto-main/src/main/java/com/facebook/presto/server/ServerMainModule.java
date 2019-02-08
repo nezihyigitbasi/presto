@@ -156,6 +156,7 @@ import static io.airlift.http.client.HttpClientBinder.httpClientBinder;
 import static io.airlift.jaxrs.JaxrsBinder.jaxrsBinder;
 import static io.airlift.json.JsonBinder.jsonBinder;
 import static io.airlift.json.JsonCodecBinder.jsonCodecBinder;
+import static io.airlift.json.SmileCodecBinder.smileCodecBinder;
 import static io.airlift.units.DataSize.Unit.MEGABYTE;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.Executors.newCachedThreadPool;
@@ -177,6 +178,7 @@ public class ServerMainModule
     @Override
     protected void setup(Binder binder)
     {
+        InternalCommunicationConfig internalCommunicationConfig = buildConfigObject(InternalCommunicationConfig.class);
         ServerConfig serverConfig = buildConfigObject(ServerConfig.class);
 
         if (serverConfig.isCoordinator()) {
@@ -303,8 +305,14 @@ public class ServerMainModule
         binder.bind(LookupJoinOperators.class).in(Scopes.SINGLETON);
 
         jsonCodecBinder(binder).bindJsonCodec(TaskStatus.class);
-        jsonCodecBinder(binder).bindJsonCodec(StageInfo.class);
         jsonCodecBinder(binder).bindJsonCodec(TaskInfo.class);
+
+        if (internalCommunicationConfig.isBinaryTransportEnabled()) {
+            smileCodecBinder(binder).bindSmileCodec(TaskStatus.class);
+            smileCodecBinder(binder).bindSmileCodec(TaskInfo.class);
+        }
+
+        jsonCodecBinder(binder).bindJsonCodec(StageInfo.class);
         jsonCodecBinder(binder).bindJsonCodec(OperatorStats.class);
         jsonCodecBinder(binder).bindJsonCodec(ExecutionFailureInfo.class);
         jaxrsBinder(binder).bind(PagesResponseWriter.class);
@@ -333,6 +341,11 @@ public class ServerMainModule
 
         jsonCodecBinder(binder).bindJsonCodec(MemoryInfo.class);
         jsonCodecBinder(binder).bindJsonCodec(MemoryPoolAssignmentsRequest.class);
+
+        if (internalCommunicationConfig.isBinaryTransportEnabled()) {
+            smileCodecBinder(binder).bindSmileCodec(MemoryInfo.class);
+            smileCodecBinder(binder).bindSmileCodec(MemoryPoolAssignmentsRequest.class);
+        }
 
         // transaction manager
         configBinder(binder).bindConfig(TransactionManagerConfig.class);
@@ -378,6 +391,12 @@ public class ServerMainModule
         // splits
         jsonCodecBinder(binder).bindJsonCodec(TaskUpdateRequest.class);
         jsonCodecBinder(binder).bindJsonCodec(ConnectorSplit.class);
+
+        if (internalCommunicationConfig.isBinaryTransportEnabled()) {
+            smileCodecBinder(binder).bindSmileCodec(TaskUpdateRequest.class);
+            smileCodecBinder(binder).bindSmileCodec(ConnectorSplit.class);
+        }
+
         jsonBinder(binder).addSerializerBinding(Slice.class).to(SliceSerializer.class);
         jsonBinder(binder).addDeserializerBinding(Slice.class).to(SliceDeserializer.class);
         jsonBinder(binder).addSerializerBinding(Expression.class).to(ExpressionSerializer.class);

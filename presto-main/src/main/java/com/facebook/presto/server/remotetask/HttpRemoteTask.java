@@ -39,8 +39,6 @@ import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Multimap;
 import com.google.common.collect.SetMultimap;
-import com.google.common.net.HttpHeaders;
-import com.google.common.net.MediaType;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -49,7 +47,11 @@ import io.airlift.http.client.FullJsonResponseHandler.JsonResponse;
 import io.airlift.http.client.HttpClient;
 import io.airlift.http.client.HttpUriBuilder;
 import io.airlift.http.client.Request;
+import io.airlift.http.client.ResponseHandler;
+import io.airlift.http.client.ResponseHandler.BaseResponse;
+import io.airlift.json.Codec;
 import io.airlift.json.JsonCodec;
+import io.airlift.json.SmileCodec;
 import io.airlift.log.Logger;
 import io.airlift.units.Duration;
 import org.joda.time.DateTime;
@@ -76,6 +78,7 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Stream;
 
+import static com.facebook.presto.PrestoMediaTypes.APPLICATION_JACKSON_SMILE;
 import static com.facebook.presto.execution.TaskInfo.createInitialTask;
 import static com.facebook.presto.execution.TaskState.ABORTED;
 import static com.facebook.presto.execution.TaskState.FAILED;
@@ -86,8 +89,12 @@ import static com.google.common.base.MoreObjects.toStringHelper;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableList.toImmutableList;
+import static com.google.common.net.HttpHeaders.ACCEPT;
+import static com.google.common.net.HttpHeaders.CONTENT_TYPE;
+import static com.google.common.net.MediaType.JSON_UTF_8;
 import static com.google.common.util.concurrent.Futures.immediateFuture;
 import static io.airlift.http.client.FullJsonResponseHandler.createFullJsonResponseHandler;
+import static io.airlift.http.client.FullSmileResponseHandler.createFullSmileResponseHandler;
 import static io.airlift.http.client.HttpUriBuilder.uriBuilderFrom;
 import static io.airlift.http.client.Request.Builder.prepareDelete;
 import static io.airlift.http.client.Request.Builder.preparePost;
@@ -144,8 +151,8 @@ public final class HttpRemoteTask
     private final Executor executor;
     private final ScheduledExecutorService errorScheduledExecutor;
 
-    private final JsonCodec<TaskInfo> taskInfoCodec;
-    private final JsonCodec<TaskUpdateRequest> taskUpdateRequestCodec;
+    private final Codec<TaskInfo> taskInfoCodec;
+    private final Codec<TaskUpdateRequest> taskUpdateRequestCodec;
 
     private final RequestErrorTracker updateErrorTracker;
 
@@ -155,6 +162,8 @@ public final class HttpRemoteTask
     private final PartitionedSplitCountTracker partitionedSplitCountTracker;
 
     private final AtomicBoolean aborting = new AtomicBoolean(false);
+
+    private final boolean isBinaryTransportEnabled;
 
     public HttpRemoteTask(Session session,
             TaskId taskId,
@@ -172,11 +181,12 @@ public final class HttpRemoteTask
             Duration taskStatusRefreshMaxWait,
             Duration taskInfoUpdateInterval,
             boolean summarizeTaskInfo,
-            JsonCodec<TaskStatus> taskStatusCodec,
-            JsonCodec<TaskInfo> taskInfoCodec,
-            JsonCodec<TaskUpdateRequest> taskUpdateRequestCodec,
+            Codec<TaskStatus> taskStatusCodec,
+            Codec<TaskInfo> taskInfoCodec,
+            Codec<TaskUpdateRequest> taskUpdateRequestCodec,
             PartitionedSplitCountTracker partitionedSplitCountTracker,
-            RemoteTaskStats stats)
+            RemoteTaskStats stats,
+            boolean isBinaryTransportEnabled)
     {
         requireNonNull(session, "session is null");
         requireNonNull(taskId, "taskId is null");
@@ -209,6 +219,7 @@ public final class HttpRemoteTask
             this.updateErrorTracker = new RequestErrorTracker(taskId, location, maxErrorDuration, errorScheduledExecutor, "updating task");
             this.partitionedSplitCountTracker = requireNonNull(partitionedSplitCountTracker, "partitionedSplitCountTracker is null");
             this.stats = stats;
+            this.isBinaryTransportEnabled = isBinaryTransportEnabled;
 
             for (Entry<PlanNodeId, Split> entry : requireNonNull(initialSplits, "initialSplits is null").entries()) {
                 ScheduledSplit scheduledSplit = new ScheduledSplit(nextSplitId.getAndIncrement(), entry.getKey(), entry.getValue());
@@ -235,7 +246,8 @@ public final class HttpRemoteTask
                     httpClient,
                     maxErrorDuration,
                     errorScheduledExecutor,
-                    stats);
+                    stats,
+                    isBinaryTransportEnabled);
 
             this.taskInfoFetcher = new TaskInfoFetcher(
                     this::failTask,
@@ -248,7 +260,8 @@ public final class HttpRemoteTask
                     executor,
                     updateScheduledExecutor,
                     errorScheduledExecutor,
-                    stats);
+                    stats,
+                    isBinaryTransportEnabled);
 
             taskStatusFetcher.addStateChangeListener(newStatus -> {
                 TaskState state = newStatus.getState();
@@ -508,21 +521,28 @@ public final class HttpRemoteTask
                 sources,
                 outputBuffers.get(),
                 totalPartitions);
-        byte[] taskUpdateRequestJson = taskUpdateRequestCodec.toJsonBytes(updateRequest);
+        byte[] taskUpdateRequestJson = taskUpdateRequestCodec.toBytes(updateRequest);
         if (fragment.isPresent()) {
             stats.updateWithPlanBytes(taskUpdateRequestJson.length);
         }
 
         HttpUriBuilder uriBuilder = getHttpUriBuilder(taskStatus);
-        Request request = preparePost()
+        Request request = setBinaryTransportHeadersIfNeeded(preparePost())
                 .setUri(uriBuilder.build())
-                .setHeader(HttpHeaders.CONTENT_TYPE, MediaType.JSON_UTF_8.toString())
                 .setBodyGenerator(createStaticBodyGenerator(taskUpdateRequestJson))
                 .build();
 
+        ResponseHandler responseHandler;
+        if (isBinaryTransportEnabled) {
+            responseHandler = createFullSmileResponseHandler((SmileCodec<TaskInfo>) taskInfoCodec);
+        }
+        else {
+            responseHandler = createFullJsonResponseHandler((JsonCodec<TaskInfo>) taskInfoCodec);
+        }
+
         updateErrorTracker.startRequest();
 
-        ListenableFuture<JsonResponse<TaskInfo>> future = httpClient.executeAsync(request, createFullJsonResponseHandler(taskInfoCodec));
+        ListenableFuture<JsonResponse<TaskInfo>> future = httpClient.executeAsync(request, responseHandler);
         currentRequest = future;
         currentRequestStartNanos = System.nanoTime();
 
@@ -568,7 +588,7 @@ public final class HttpRemoteTask
 
             // send cancel to task and ignore response
             HttpUriBuilder uriBuilder = getHttpUriBuilder(taskStatus).addParameter("abort", "false");
-            Request request = prepareDelete()
+            Request request = setBinaryTransportHeadersIfNeeded(prepareDelete())
                     .setUri(uriBuilder.build())
                     .build();
             scheduleAsyncCleanupRequest(createCleanupBackoff(), request, "cancel");
@@ -598,7 +618,7 @@ public final class HttpRemoteTask
         // The remote task is likely to get a delete from the PageBufferClient first.
         // We send an additional delete anyway to get the final TaskInfo
         HttpUriBuilder uriBuilder = getHttpUriBuilder(getTaskStatus());
-        Request request = prepareDelete()
+        Request request = setBinaryTransportHeadersIfNeeded(prepareDelete())
                 .setUri(uriBuilder.build())
                 .build();
 
@@ -624,7 +644,8 @@ public final class HttpRemoteTask
 
             // send abort to task
             HttpUriBuilder uriBuilder = getHttpUriBuilder(getTaskStatus());
-            Request request = prepareDelete()
+
+            Request request = setBinaryTransportHeadersIfNeeded(prepareDelete())
                     .setUri(uriBuilder.build())
                     .build();
             scheduleAsyncCleanupRequest(createCleanupBackoff(), request, "abort");
@@ -643,10 +664,18 @@ public final class HttpRemoteTask
 
     private void doScheduleAsyncCleanupRequest(Backoff cleanupBackoff, Request request, String action)
     {
-        Futures.addCallback(httpClient.executeAsync(request, createFullJsonResponseHandler(taskInfoCodec)), new FutureCallback<JsonResponse<TaskInfo>>()
+        ResponseHandler responseHandler;
+        if (isBinaryTransportEnabled) {
+            responseHandler = createFullSmileResponseHandler((SmileCodec<TaskInfo>) taskInfoCodec);
+        }
+        else {
+            responseHandler = createFullJsonResponseHandler((JsonCodec<TaskInfo>) taskInfoCodec);
+        }
+
+        Futures.addCallback(httpClient.executeAsync(request, responseHandler), new FutureCallback<BaseResponse<TaskInfo>>()
         {
             @Override
-            public void onSuccess(JsonResponse<TaskInfo> result)
+            public void onSuccess(BaseResponse<TaskInfo> result)
             {
                 try {
                     updateTaskInfo(result.getValue());
@@ -738,6 +767,18 @@ public final class HttpRemoteTask
                 .add(new Duration(1, SECONDS))
                 .add(new Duration(10, SECONDS))
                 .build());
+    }
+
+    private Request.Builder setBinaryTransportHeadersIfNeeded(Request.Builder requestBuilder)
+    {
+        if (isBinaryTransportEnabled) {
+            return requestBuilder
+                    .setHeader(CONTENT_TYPE, APPLICATION_JACKSON_SMILE)
+                    .setHeader(ACCEPT, APPLICATION_JACKSON_SMILE);
+        }
+        return requestBuilder
+                .setHeader(CONTENT_TYPE, JSON_UTF_8.toString())
+                .setHeader(ACCEPT, JSON_UTF_8.toString());
     }
 
     @Override

@@ -25,7 +25,10 @@ import io.airlift.http.client.FullJsonResponseHandler;
 import io.airlift.http.client.HttpClient;
 import io.airlift.http.client.HttpUriBuilder;
 import io.airlift.http.client.Request;
+import io.airlift.http.client.ResponseHandler;
+import io.airlift.json.Codec;
 import io.airlift.json.JsonCodec;
+import io.airlift.json.SmileCodec;
 import io.airlift.units.Duration;
 
 import javax.annotation.concurrent.GuardedBy;
@@ -39,9 +42,12 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
+import static com.facebook.presto.PrestoMediaTypes.APPLICATION_JACKSON_SMILE;
+import static com.google.common.net.HttpHeaders.ACCEPT;
 import static com.google.common.net.HttpHeaders.CONTENT_TYPE;
 import static com.google.common.net.MediaType.JSON_UTF_8;
 import static io.airlift.http.client.FullJsonResponseHandler.createFullJsonResponseHandler;
+import static io.airlift.http.client.FullSmileResponseHandler.createFullSmileResponseHandler;
 import static io.airlift.http.client.HttpUriBuilder.uriBuilderFrom;
 import static io.airlift.http.client.Request.Builder.prepareGet;
 import static io.airlift.units.Duration.nanosSince;
@@ -55,7 +61,7 @@ public class TaskInfoFetcher
     private final Consumer<Throwable> onFail;
     private final StateMachine<TaskInfo> taskInfo;
     private final StateMachine<Optional<TaskInfo>> finalTaskInfo;
-    private final JsonCodec<TaskInfo> taskInfoCodec;
+    private final Codec<TaskInfo> taskInfoCodec;
 
     private final long updateIntervalMillis;
     private final AtomicLong lastUpdateNanos = new AtomicLong();
@@ -81,18 +87,21 @@ public class TaskInfoFetcher
     @GuardedBy("this")
     private ListenableFuture<FullJsonResponseHandler.JsonResponse<TaskInfo>> future;
 
+    private final boolean isBinaryTransportEnabled;
+
     public TaskInfoFetcher(
             Consumer<Throwable> onFail,
             TaskInfo initialTask,
             HttpClient httpClient,
             Duration updateInterval,
-            JsonCodec<TaskInfo> taskInfoCodec,
+            Codec<TaskInfo> taskInfoCodec,
             Duration maxErrorDuration,
             boolean summarizeTaskInfo,
             Executor executor,
             ScheduledExecutorService updateScheduledExecutor,
             ScheduledExecutorService errorScheduledExecutor,
-            RemoteTaskStats stats)
+            RemoteTaskStats stats,
+            boolean isBinaryTransportEnabled)
     {
         requireNonNull(initialTask, "initialTask is null");
         requireNonNull(errorScheduledExecutor, "errorScheduledExecutor is null");
@@ -112,6 +121,7 @@ public class TaskInfoFetcher
         this.executor = requireNonNull(executor, "executor is null");
         this.httpClient = requireNonNull(httpClient, "httpClient is null");
         this.stats = requireNonNull(stats, "stats is null");
+        this.isBinaryTransportEnabled = isBinaryTransportEnabled;
     }
 
     public TaskInfo getTaskInfo()
@@ -202,13 +212,20 @@ public class TaskInfoFetcher
 
         HttpUriBuilder httpUriBuilder = uriBuilderFrom(taskStatus.getSelf());
         URI uri = summarizeTaskInfo ? httpUriBuilder.addParameter("summarize").build() : httpUriBuilder.build();
-        Request request = prepareGet()
+        Request request = setBinaryTransportHeadersIfNeeded(prepareGet())
                 .setUri(uri)
-                .setHeader(CONTENT_TYPE, JSON_UTF_8.toString())
                 .build();
 
+        ResponseHandler responseHandler;
+        if (isBinaryTransportEnabled) {
+            responseHandler = createFullSmileResponseHandler((SmileCodec<TaskInfo>) taskInfoCodec);
+        }
+        else {
+            responseHandler = createFullJsonResponseHandler((JsonCodec<TaskInfo>) taskInfoCodec);
+        }
+
         errorTracker.startRequest();
-        future = httpClient.executeAsync(request, createFullJsonResponseHandler(taskInfoCodec));
+        future = httpClient.executeAsync(request, responseHandler);
         currentRequestStartNanos.set(System.nanoTime());
         Futures.addCallback(future, new SimpleHttpResponseHandler<>(this, request.getUri(), stats), executor);
     }
@@ -286,5 +303,17 @@ public class TaskInfoFetcher
     private static boolean isDone(TaskInfo taskInfo)
     {
         return taskInfo.getTaskStatus().getState().isDone();
+    }
+
+    private Request.Builder setBinaryTransportHeadersIfNeeded(Request.Builder requestBuilder)
+    {
+        if (isBinaryTransportEnabled) {
+            return requestBuilder
+                    .setHeader(CONTENT_TYPE, APPLICATION_JACKSON_SMILE)
+                    .setHeader(ACCEPT, APPLICATION_JACKSON_SMILE);
+        }
+        return requestBuilder
+                .setHeader(CONTENT_TYPE, JSON_UTF_8.toString())
+                .setHeader(ACCEPT, JSON_UTF_8.toString());
     }
 }

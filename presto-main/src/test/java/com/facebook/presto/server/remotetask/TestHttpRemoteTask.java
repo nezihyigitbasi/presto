@@ -33,6 +33,7 @@ import com.facebook.presto.metadata.HandleResolver;
 import com.facebook.presto.metadata.PrestoNode;
 import com.facebook.presto.metadata.Split;
 import com.facebook.presto.server.HttpRemoteTaskFactory;
+import com.facebook.presto.server.InternalCommunicationConfig;
 import com.facebook.presto.server.TaskUpdateRequest;
 import com.facebook.presto.spi.ErrorCode;
 import com.facebook.presto.spi.type.Type;
@@ -57,6 +58,7 @@ import io.airlift.jaxrs.JsonMapper;
 import io.airlift.jaxrs.testing.JaxrsTestingHttpProcessor;
 import io.airlift.json.JsonCodec;
 import io.airlift.json.JsonModule;
+import io.airlift.json.SmileCodec;
 import io.airlift.units.Duration;
 import org.testng.annotations.Test;
 
@@ -96,6 +98,7 @@ import static com.google.inject.multibindings.Multibinder.newSetBinder;
 import static io.airlift.configuration.ConfigBinder.configBinder;
 import static io.airlift.json.JsonBinder.jsonBinder;
 import static io.airlift.json.JsonCodecBinder.jsonCodecBinder;
+import static io.airlift.json.SmileCodecBinder.smileCodecBinder;
 import static java.lang.Math.min;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
@@ -234,6 +237,9 @@ public class TestHttpRemoteTask
                         binder.bind(TypeManager.class).to(TypeRegistry.class).in(Scopes.SINGLETON);
                         jsonBinder(binder).addDeserializerBinding(Type.class).to(TypeDeserializer.class);
                         newSetBinder(binder, Type.class);
+                        smileCodecBinder(binder).bindSmileCodec(TaskStatus.class);
+                        smileCodecBinder(binder).bindSmileCodec(TaskInfo.class);
+                        smileCodecBinder(binder).bindSmileCodec(TaskUpdateRequest.class);
                         jsonCodecBinder(binder).bindJsonCodec(TaskStatus.class);
                         jsonCodecBinder(binder).bindJsonCodec(TaskInfo.class);
                         jsonCodecBinder(binder).bindJsonCodec(TaskUpdateRequest.class);
@@ -242,9 +248,12 @@ public class TestHttpRemoteTask
                     @Provides
                     private HttpRemoteTaskFactory createHttpRemoteTaskFactory(
                             JsonMapper jsonMapper,
-                            JsonCodec<TaskStatus> taskStatusCodec,
-                            JsonCodec<TaskInfo> taskInfoCodec,
-                            JsonCodec<TaskUpdateRequest> taskUpdateRequestCodec)
+                            JsonCodec<TaskStatus> taskStatusJsonCodec,
+                            SmileCodec<TaskStatus> taskStatusSmileCodec,
+                            JsonCodec<TaskInfo> taskInfoJsonCodec,
+                            SmileCodec<TaskInfo> taskInfoSmileCodec,
+                            JsonCodec<TaskUpdateRequest> taskUpdateRequestJsonCodec,
+                            SmileCodec<TaskUpdateRequest> taskUpdateRequestSmileCodec)
                     {
                         JaxrsTestingHttpProcessor jaxrsTestingHttpProcessor = new JaxrsTestingHttpProcessor(URI.create("http://fake.invalid/"), testingTaskResource, jsonMapper);
                         TestingHttpClient testingHttpClient = new TestingHttpClient(jaxrsTestingHttpProcessor.setTrace(TRACE_HTTP));
@@ -254,10 +263,14 @@ public class TestHttpRemoteTask
                                 TASK_MANAGER_CONFIG,
                                 testingHttpClient,
                                 new TestSqlTaskManager.MockLocationFactory(),
-                                taskStatusCodec,
-                                taskInfoCodec,
-                                taskUpdateRequestCodec,
-                                new RemoteTaskStats());
+                                taskStatusJsonCodec,
+                                taskStatusSmileCodec,
+                                taskInfoJsonCodec,
+                                taskInfoSmileCodec,
+                                taskUpdateRequestJsonCodec,
+                                taskUpdateRequestSmileCodec,
+                                new RemoteTaskStats(),
+                                new InternalCommunicationConfig());
                     }
                 });
         Injector injector = app

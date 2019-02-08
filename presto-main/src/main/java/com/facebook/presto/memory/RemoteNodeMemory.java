@@ -16,11 +16,15 @@ package com.facebook.presto.memory;
 import com.facebook.presto.spi.Node;
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
-import io.airlift.http.client.FullJsonResponseHandler.JsonResponse;
 import io.airlift.http.client.HttpClient;
 import io.airlift.http.client.HttpClient.HttpResponseFuture;
 import io.airlift.http.client.Request;
+import io.airlift.http.client.ResponseHandler;
+import io.airlift.http.client.ResponseHandler.BaseResponse;
+import io.airlift.http.client.StaticBodyGenerator;
+import io.airlift.json.Codec;
 import io.airlift.json.JsonCodec;
+import io.airlift.json.SmileCodec;
 import io.airlift.log.Logger;
 import io.airlift.units.Duration;
 
@@ -33,16 +37,20 @@ import java.util.concurrent.Future;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static com.facebook.presto.PrestoMediaTypes.APPLICATION_JACKSON_SMILE;
+import static com.google.common.net.HttpHeaders.ACCEPT;
+import static com.google.common.net.HttpHeaders.CONTENT_TYPE;
 import static com.google.common.net.MediaType.JSON_UTF_8;
 import static com.google.common.util.concurrent.MoreExecutors.directExecutor;
 import static io.airlift.http.client.FullJsonResponseHandler.createFullJsonResponseHandler;
+import static io.airlift.http.client.FullSmileResponseHandler.createFullSmileResponseHandler;
 import static io.airlift.http.client.HttpStatus.OK;
 import static io.airlift.http.client.JsonBodyGenerator.jsonBodyGenerator;
 import static io.airlift.http.client.Request.Builder.preparePost;
+import static io.airlift.http.client.SmileBodyGenerator.smileBodyGenerator;
 import static io.airlift.units.Duration.nanosSince;
 import static java.util.Objects.requireNonNull;
 import static java.util.concurrent.TimeUnit.SECONDS;
-import static javax.ws.rs.core.HttpHeaders.CONTENT_TYPE;
 
 @ThreadSafe
 public class RemoteNodeMemory
@@ -52,26 +60,28 @@ public class RemoteNodeMemory
     private final Node node;
     private final HttpClient httpClient;
     private final URI memoryInfoUri;
-    private final JsonCodec<MemoryInfo> memoryInfoCodec;
-    private final JsonCodec<MemoryPoolAssignmentsRequest> assignmentsRequestJsonCodec;
+    private final Codec<MemoryInfo> memoryInfoCodec;
+    private final Codec<MemoryPoolAssignmentsRequest> assignmentsRequestCodec;
     private final AtomicReference<Optional<MemoryInfo>> memoryInfo = new AtomicReference<>(Optional.empty());
     private final AtomicReference<Future<?>> future = new AtomicReference<>();
     private final AtomicLong lastUpdateNanos = new AtomicLong();
     private final AtomicLong lastWarningLogged = new AtomicLong();
     private final AtomicLong currentAssignmentVersion = new AtomicLong(-1);
+    private final boolean isBinaryTransportEnabled;
 
     public RemoteNodeMemory(
             Node node,
             HttpClient httpClient,
-            JsonCodec<MemoryInfo> memoryInfoCodec,
-            JsonCodec<MemoryPoolAssignmentsRequest> assignmentsRequestJsonCodec,
-            URI memoryInfoUri)
+            Codec<MemoryInfo> memoryInfoCodec,
+            Codec<MemoryPoolAssignmentsRequest> assignmentsRequestCodec,
+            URI memoryInfoUri, boolean isBinaryTransportEnabled)
     {
         this.node = requireNonNull(node, "node is null");
         this.httpClient = requireNonNull(httpClient, "httpClient is null");
         this.memoryInfoUri = requireNonNull(memoryInfoUri, "memoryInfoUri is null");
         this.memoryInfoCodec = requireNonNull(memoryInfoCodec, "memoryInfoCodec is null");
-        this.assignmentsRequestJsonCodec = requireNonNull(assignmentsRequestJsonCodec, "assignmentsRequestJsonCodec is null");
+        this.assignmentsRequestCodec = requireNonNull(assignmentsRequestCodec, "assignmentsRequestCodec is null");
+        this.isBinaryTransportEnabled = isBinaryTransportEnabled;
     }
 
     public long getCurrentAssignmentVersion()
@@ -99,18 +109,26 @@ public class RemoteNodeMemory
             lastWarningLogged.set(System.nanoTime());
         }
         if (sinceUpdate.toMillis() > 1_000 && future.get() == null) {
-            Request request = preparePost()
+            Request request = setBinaryTransportHeadersIfNeeded(preparePost())
                     .setUri(memoryInfoUri)
-                    .setHeader(CONTENT_TYPE, JSON_UTF_8.toString())
-                    .setBodyGenerator(jsonBodyGenerator(assignmentsRequestJsonCodec, assignments))
+                    .setBodyGenerator(createBodyGenerator(assignments))
                     .build();
-            HttpResponseFuture<JsonResponse<MemoryInfo>> responseFuture = httpClient.executeAsync(request, createFullJsonResponseHandler(memoryInfoCodec));
+
+            ResponseHandler responseHandler;
+            if (isBinaryTransportEnabled) {
+                responseHandler = createFullSmileResponseHandler((SmileCodec<MemoryInfo>) memoryInfoCodec);
+            }
+            else {
+                responseHandler = createFullJsonResponseHandler((JsonCodec<MemoryInfo>) memoryInfoCodec);
+            }
+
+            HttpResponseFuture<BaseResponse<MemoryInfo>> responseFuture = httpClient.executeAsync(request, responseHandler);
             future.compareAndSet(null, responseFuture);
 
-            Futures.addCallback(responseFuture, new FutureCallback<JsonResponse<MemoryInfo>>()
+            Futures.addCallback(responseFuture, new FutureCallback<BaseResponse<MemoryInfo>>()
             {
                 @Override
-                public void onSuccess(@Nullable JsonResponse<MemoryInfo> result)
+                public void onSuccess(@Nullable BaseResponse<MemoryInfo> result)
                 {
                     lastUpdateNanos.set(System.nanoTime());
                     future.compareAndSet(responseFuture, null);
@@ -136,5 +154,25 @@ public class RemoteNodeMemory
                 }
             }, directExecutor());
         }
+    }
+
+    private StaticBodyGenerator createBodyGenerator(MemoryPoolAssignmentsRequest assignments)
+    {
+        if (isBinaryTransportEnabled) {
+            return smileBodyGenerator((SmileCodec<MemoryPoolAssignmentsRequest>) assignmentsRequestCodec, assignments);
+        }
+        return jsonBodyGenerator((JsonCodec<MemoryPoolAssignmentsRequest>) assignmentsRequestCodec, assignments);
+    }
+
+    private Request.Builder setBinaryTransportHeadersIfNeeded(Request.Builder requestBuilder)
+    {
+        if (isBinaryTransportEnabled) {
+            return requestBuilder
+                    .setHeader(CONTENT_TYPE, APPLICATION_JACKSON_SMILE)
+                    .setHeader(ACCEPT, APPLICATION_JACKSON_SMILE);
+        }
+        return requestBuilder
+                .setHeader(CONTENT_TYPE, JSON_UTF_8.toString())
+                .setHeader(ACCEPT, JSON_UTF_8.toString());
     }
 }

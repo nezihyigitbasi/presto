@@ -35,7 +35,9 @@ import com.google.common.collect.Multimap;
 import io.airlift.concurrent.BoundedExecutor;
 import io.airlift.concurrent.ThreadPoolExecutorMBean;
 import io.airlift.http.client.HttpClient;
+import io.airlift.json.Codec;
 import io.airlift.json.JsonCodec;
+import io.airlift.json.SmileCodec;
 import io.airlift.units.Duration;
 import org.weakref.jmx.Managed;
 import org.weakref.jmx.Nested;
@@ -59,9 +61,9 @@ public class HttpRemoteTaskFactory
 {
     private final HttpClient httpClient;
     private final LocationFactory locationFactory;
-    private final JsonCodec<TaskStatus> taskStatusCodec;
-    private final JsonCodec<TaskInfo> taskInfoCodec;
-    private final JsonCodec<TaskUpdateRequest> taskUpdateRequestCodec;
+    private final Codec<TaskStatus> taskStatusCodec;
+    private final Codec<TaskInfo> taskInfoCodec;
+    private final Codec<TaskUpdateRequest> taskUpdateRequestCodec;
     private final Duration maxErrorDuration;
     private final Duration taskStatusRefreshMaxWait;
     private final Duration taskInfoUpdateInterval;
@@ -71,22 +73,24 @@ public class HttpRemoteTaskFactory
     private final ScheduledExecutorService updateScheduledExecutor;
     private final ScheduledExecutorService errorScheduledExecutor;
     private final RemoteTaskStats stats;
+    private final boolean isBinaryTransportEnabled;
 
     @Inject
     public HttpRemoteTaskFactory(QueryManagerConfig config,
             TaskManagerConfig taskConfig,
             @ForScheduler HttpClient httpClient,
             LocationFactory locationFactory,
-            JsonCodec<TaskStatus> taskStatusCodec,
-            JsonCodec<TaskInfo> taskInfoCodec,
-            JsonCodec<TaskUpdateRequest> taskUpdateRequestCodec,
-            RemoteTaskStats stats)
+            JsonCodec<TaskStatus> taskStatusJsonCodec,
+            SmileCodec<TaskStatus> taskStatusSmileCodec,
+            JsonCodec<TaskInfo> taskInfoJsonCodec,
+            SmileCodec<TaskInfo> taskInfoSmileCodec,
+            JsonCodec<TaskUpdateRequest> taskUpdateRequestJsonCodec,
+            SmileCodec<TaskUpdateRequest> taskUpdateRequestSmileCodec,
+            RemoteTaskStats stats,
+            InternalCommunicationConfig communicationConfig)
     {
         this.httpClient = httpClient;
         this.locationFactory = locationFactory;
-        this.taskStatusCodec = taskStatusCodec;
-        this.taskInfoCodec = taskInfoCodec;
-        this.taskUpdateRequestCodec = taskUpdateRequestCodec;
         this.maxErrorDuration = config.getRemoteTaskMaxErrorDuration();
         this.taskStatusRefreshMaxWait = taskConfig.getStatusRefreshMaxWait();
         this.taskInfoUpdateInterval = taskConfig.getInfoUpdateInterval();
@@ -94,6 +98,18 @@ public class HttpRemoteTaskFactory
         this.executor = new BoundedExecutor(coreExecutor, config.getRemoteTaskMaxCallbackThreads());
         this.executorMBean = new ThreadPoolExecutorMBean((ThreadPoolExecutor) coreExecutor);
         this.stats = requireNonNull(stats, "stats is null");
+        isBinaryTransportEnabled = requireNonNull(communicationConfig, "communicationConfig is null").isBinaryTransportEnabled();
+
+        if (isBinaryTransportEnabled) {
+            this.taskStatusCodec = taskStatusSmileCodec;
+            this.taskInfoCodec = taskInfoSmileCodec;
+            this.taskUpdateRequestCodec = taskUpdateRequestSmileCodec;
+        }
+        else {
+            this.taskStatusCodec = taskStatusJsonCodec;
+            this.taskInfoCodec = taskInfoJsonCodec;
+            this.taskUpdateRequestCodec = taskUpdateRequestJsonCodec;
+        }
 
         this.updateScheduledExecutor = newSingleThreadScheduledExecutor(daemonThreadsNamed("task-info-update-scheduler-%s"));
         this.errorScheduledExecutor = newSingleThreadScheduledExecutor(daemonThreadsNamed("remote-task-error-delay-%s"));
@@ -145,6 +161,7 @@ public class HttpRemoteTaskFactory
                 taskInfoCodec,
                 taskUpdateRequestCodec,
                 partitionedSplitCountTracker,
-                stats);
+                stats,
+                isBinaryTransportEnabled);
     }
 }

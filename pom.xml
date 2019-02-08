@@ -5,7 +5,7 @@
     <parent>
         <groupId>io.airlift</groupId>
         <artifactId>airbase</artifactId>
-        <version>88</version>
+        <version>90</version>
     </parent>
 
     <groupId>com.facebook.presto</groupId>
@@ -44,7 +44,7 @@
         <air.maven.version>3.3.9</air.maven.version>
 
         <dep.antlr.version>4.7.1</dep.antlr.version>
-        <dep.airlift.version>0.178</dep.airlift.version>
+        <dep.airlift.version>0.179-SNAPSHOT</dep.airlift.version>
         <dep.packaging.version>${dep.airlift.version}</dep.packaging.version>
         <dep.slice.version>0.36</dep.slice.version>
         <dep.aws-sdk.version>1.11.445</dep.aws-sdk.version>
@@ -644,7 +644,7 @@
             <dependency>
                 <groupId>io.airlift.tpch</groupId>
                 <artifactId>tpch</artifactId>
-                <version>0.9</version>
+                <version>0.10</version>
             </dependency>
 
             <dependency>
@@ -832,6 +832,7 @@
             <dependency>
                 <groupId>io.airlift.discovery</groupId>
                 <artifactId>discovery-server</artifactId>
+<!-- 1.30-SNAPSHOT was working -->
                 <version>1.29</version>
             </dependency>
 
@@ -1096,6 +1097,12 @@
                 <groupId>org.javassist</groupId>
                 <artifactId>javassist</artifactId>
                 <version>3.22.0-GA</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.apache.httpcomponents</groupId>
+                <artifactId>httpcore</artifactId>
+                <version>4.4.9</version>
             </dependency>
         </dependencies>
     </dependencyManagement>
